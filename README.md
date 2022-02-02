@@ -1,4 +1,4 @@
-KoL
+KoLUtils
 =====
 A collection of utilities for the online game Kingdom of Loathing.
 

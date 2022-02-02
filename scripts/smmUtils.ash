@@ -752,6 +752,10 @@ void unequipAll(boolean unequipFamiliar) {
 	}
 }
 
+void unequipAll() {
+	unequipAll(true);
+}
+
 
 
 // returns the average number of adventures gained by eating/drinking the given item
@@ -839,6 +843,10 @@ boolean isPPUseful(location aLocation) {
 	}
 
 	return false;
+}
+
+boolean isPPUseful() {
+	return isPPUseful(my_location());
 }
 
 
