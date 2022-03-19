@@ -1,19 +1,19 @@
-since r26135;
+since r26249;
 
-string __smm_utils_version = "0.9";
+string __smm_utils_version = "1.0";
 
 
 /*
 A collection of utilities for Kingdom of Loathing.
 
-To use the subroutines from this ASH file in the CLI, do this in the CLI:
+To use the functions from this ASH file in the gCLI, do this:
 using smmUtils.ash;
 
-You can then call any subroutine in this file from the command line. For example:
-itemDescription (yellow rocket);
+You can then call any function in this file from the command line. For example:
+itemDescription (pantogram pants);
      NOTE this ^ space between the name of the subroutine and the parenthesis is important for some reason
 
-Subroutines without any params can be called without the empty parens (), e.g.:
+Functions without any params can be called without the empty parens (), e.g.:
 timeToRollover;
 
 To stop using this on the CLI, do:
@@ -28,6 +28,20 @@ have to re-"using" them after resetting the name space)
 // -------------------------------------
 // DATA TYPES, CONSTANTS, AND DATA
 // -------------------------------------
+
+record IntRange {
+	int top;
+	int bottom;
+};
+
+
+
+record ChoiceRecord {
+   int choiceNum;
+   string choiceString;
+};
+
+
 
 record ItemDropRecord {
    item drop;
@@ -45,19 +59,15 @@ record ActionRecord {
 	item item2ToUse;
 };
 
-// various iterations of the skill record priority scheme
-// deprecated
+
+
 record BanishRecord {
 	skill skillUsed;
 	int turncount;
 	monster monsterBanished;
 };
 
-// deprecated
-record SkillRecord {
-	skill skillToUse;
-	item itemToEquip;
-};
+
 
 // the final version of the priority scheme
 record PrioritySkillRecord {
@@ -68,17 +78,6 @@ record PrioritySkillRecord {
 	float priority;         // whole part is the group, fractional part only affects which is chosen if usesAvailable are equal
 	int usesAvailable;      // number available to use assuming all conditions are met (i.e. the item is worn, have enough mana, etc.)
 	boolean isAvailableNow; // if we had uses available, could we cast it now?
-};
-
-
-
-// abstracts the notion of an adventure to include not just a location but also item uses and skill uses.
-// this uniquely identifies a single method to start an adventure
-// One and only one field should be filled out, all others should be none.
-record AdventureRecord {
-	location locationToUse;
-	skill skillToUse;
-	item itemToUse;
 };
 
 
@@ -121,6 +120,8 @@ string kFloundrySpotsKey = "_floundryFishingSpots";
 
 string kHadGoalsKey = "smm.HadGoals";
 
+string kDCPropertyPrefix = "_smm.DCTop10For";
+
 string kSavedOutfitKeyPrefix = "_smm.SavedOutfit";
 string kSavedFamiliarKeyPrefix = "_smm.SavedFamiliar";
 string kSavedFamiliarEquipKeyPrefix = "_smm.SavedFamiliarEquipment";
@@ -141,7 +142,7 @@ string kLastSmutOrcPervertTurnsSpentKey = "smm.LastSmutOrcPervertTurnsSpent";
 
 int kCocoonHealing = 1000;
 
-int kSausagesToGet = 15;
+int kSausagesToGet = 11;
 int kSausagesToEat = 23;
 int kMaxSausagesToEat = 23;
 
@@ -246,22 +247,64 @@ effect [] kDrivingStyles = {
 
 // in order of to-get
 location [string] kLatteLocations = {
+	// the ones we want
 	"carrot" : $location[The Dire Warren], // +20% Items from Monsters
 	"cajun" : $location[The Black Forest], // +40% Meat from Monsters
 	"rawhide" : $location[The Spooky Forest], // +5 to Familiar Weight
 	"guarna" : $location[The Bat Hole Entrance], // +4 Adventures Per Day
 
+	// useful
+	"hellion" : $location[The Dark Neck of the Woods], // +6 PvP Fights Per Day
 	"fresh grass" : $location[The Hidden Park], // +3 Stats Per Fight
 	"lizard" : $location[The Arid, Extra-Dry Desert], // lizard milk -- Regenerate 5-15 MP per Adventure?
 	"vitamin" : $location[The Dark Elbow of the Woods], // +3 Familiar Experience Per Combat
-	"wing" : $location[The Dark Heart of the Woods], // hot wing -- +10% Combat Frequency
 	"ink" : $location[The Haunted Library], // -10% Combat Frequency
-	"hellion" : $location[The Dark Neck of the Woods], // +6 PvP Fights Per Day
-};
+	"wing" : $location[The Dark Heart of the Woods], // hot wing -- +10% Combat Frequency
 
-string [] kDefaultLatteIngredients = {"carrot", "cajun", "rawhide"}; // ingredients must appear in kLatteLocations
-string [] kDefaultLatteLastRefillIngredients = {"carrot", "cajun", "guarna"}; // ingredients must appear in kLatteLocations
-string [] kExtraLatteIngredients = {}; // extra ingredients to unlock (other than those in the above 2 lists) -- ingredients must appear in kLatteLocations
+	// not so useful -- in alphabetical order
+	"ancient spice" : $location[The Mouldering Mansion], // +50 spooky dmg -- not unlocked by default
+	"asp venom" : $location[The Middle Chamber], // +25 weapon dmg
+	"basil" : $location[The Overgrown Lot], // 5hp/adv regen
+	"Belgian Vanilla" : $location[Whitey's Grove], // all stats +20%
+	"blue chalks" : $location[The Haunted Billiards Room], // +25 cold dmg
+	"bug-thistle" : $location[The Bugbear Pen], // +20 mys -- not unlocked by default
+	"butternut" : $location[Madness Bakery], // +10 spell dmg
+	"carrrdamom" : $location[Barrrney's Barrr], // 5mp/adv regen
+	"chili seeds" : $location[The Haunted Kitchen], // +3 hot res
+	"clove" : $location[The Sleazy Back Alley], // +3 stench res
+	"coal" : $location[The Haunted Boiler Room], // +25 hot dmg
+	"cocoa powder" : $location[The Icy Peak], // +3 cold res
+	"diet soda" : $location[Battlefield (No Uniform)], // The Cola Wars Battlefield, +50 init -- not unlocked by default
+	"Dwarf Cream" : $location[Itznotyerzitz Mine], // +30 mus
+	"Dyspepsi" : $location[Battlefield (Dyspepsi Uniform)], // The Cola Wars Battlefield, +25 init -- not unlocked by default
+	"filth milk" : $location[The Feeding Chamber], // +20 dr
+	"fungus" : $location[The Fungal Nethers], // +30 max mp
+	"grave mold" : $location[The Unquiet Garves], // +20 spooky dmg
+	"greek spice" : $location[Frat House], // Frat/Undisguised, +25 sleaze dmg
+	"grobold rum" : $location[The Old Rubee Mine], // +25 sleaze dmg -- not unlocked by default
+	"gunpowder" : $location[1st Floor, Shiawase-Mitsuhama Building], // +50 weapon dmg -- not unlocked by default
+	"Health Potion" : $location[The Daily Dungeon], // 15hp/adv regen
+	"hobo spices" : $location[Hobopolis Town Square], // +50 da
+	"hot sausage" : $location[Cobb's Knob Barracks], // +50% mus
+	"kombucha" : $location[Hippy Camp], // Hippy/Undisguised, +25 stench dmg
+	"Lihc saliva" : $location[The Defiled Niche], // +25 spooky dmg
+	"Macaroni" : $location[The Haunted Pantry], // +20 max hp
+	"mega sausage" : $location[Cobb's Knob Laboratory], // +50 mox
+	"motor oil" : $location[The Old Landfill], // +20 sleaze dmg
+	"MSG" : $location[The Briniest Deepests], // 
+	"norwhal milk" : $location[The Ice Hole], // +200% max hp -- not unlocked by default
+	"oil paint" : $location[The Haunted Gallery], // +5 pris dmg
+	"paradise milk" : $location[The Stately Pleasure Dome], // +20 all stat -- not unlocked by default
+	"rock salt" : $location[The Brinier Deepers], // +10% crit
+	"salt" : $location[The Briny Deeps], // +5% crit
+	"sandalwood" : $location[Noob Cave], // +5 all stats
+	"sausage" : $location[Cobb's Knob Kitchens], // +50% mys
+	"space pumpkin" : $location[The Hole in the Sky], // +10 all stats
+	"spaghetti squash" : $location[The Copperhead Club], // +20 spell dmg
+	"teeth" : $location[The VERY Unquiet Garves], // +25 spooky dmg, +25 weapon dmg
+	"white flour" : $location[The Road to the White Citadel], // +3 sleaze res
+	"squamous salt" : $location[The Caliginous Abyss], // +3 spooky res
+};
 
 
 
@@ -306,7 +349,7 @@ boolean kDontAbort = false;
 // -------------------------------------
 
 boolean freeWanderingMonstersOnly() {
-	return to_boolean(get_property("_smm.StopNonFreeVoteAdventures"));
+	return to_boolean(get_property("smm.FreeWanderingMonstersOnly"));
 }
 
 
@@ -320,6 +363,18 @@ int smm_abs(int val) {
 		return -val;
 	else
 		return val;
+}
+
+
+
+// conditional print
+void cprint(boolean condition, string toPrint, string colour) {
+	if (condition)
+		print(toPrint, colour);
+}
+
+void cprint(boolean condition, string toPrint) {
+	cprint(condition, toPrint, "");
 }
 
 
@@ -425,9 +480,9 @@ boolean arrayContains(monster [] array, monster test) {
 	return false;
 }
 
-boolean arrayContains(SkillRecord [] array, PrioritySkillRecord test) {
-	foreach idx, sr in array {
-		if (sr.skillToUse == test.theSkill && sr.itemToEquip == test.theItem)
+boolean arrayContains(PrioritySkillRecord [] array, PrioritySkillRecord test) {
+	foreach idx, psr in array {
+		if (psr.theSkill == test.theSkill && psr.theItem == test.theItem)
 			return true;
 	}
 	return false;
@@ -475,6 +530,11 @@ int minutesToRollover() {
 
 
 
+boolean isBeatenUp() {
+	return have_effect($effect[Beaten Up]) > 0;
+}
+
+
 boolean inCombat() {
 // 	return current_round() != 0 && monster_hp() > 0 && my_hp() > 0;
 	return current_round() != 0;
@@ -491,65 +551,6 @@ boolean [element] weak_elements(element anElement) {
 		case $element[sleaze]: return $elements[cold, spooky];
 	}
 	return $elements[none];
-}
-
-
-
-// prints useful info for the location we're about to adventure in
-// only prints the info once per day per location
-void notesForLocation(location aLocation) { // location notes locationnotes
-	string doOnceProperty = "_smm.DoOnceNotesForLocation" + aLocation;
-	boolean doneOnce = to_boolean(get_property(doOnceProperty));
-
-	string [location] notes = {
-		$location[The Fungal Nethers] : "can OLFACT angry fungus",
-		$location[Thugnderdome] : "can OLFACT gnarly and gnasty gnome",
-		$location[8-bit realm] : "can OLFACT blooper",
-		$location[The Haunted Library] : "can OLFACT writing desk",
-		$location[The Defiled Niche] : "can OLFACT dirty old lihc",
-		$location[The Goatlet] : "can OLFACT dairy goat",
-		$location[Twin Peak] : "can OLFACT topiary",
-		$location[The Hidden Temple] : "can OLFACT sheep",
-		$location[The Haunted Wine Cellar] : "can OLFACT possessed wine rack",
-		$location[The Haunted Laundry Room] : "can OLFACT cabinet",
-		$location[The Haunted Boiler Room] : "can OLFACT boiler",
-		$location[The Penultimate Fantasy Airship] : "can OLFACT healer",
-		$location[Belowdecks] : "can OLFACT gaudy pirate",
-		$location[The Hidden Bowling Alley] : "can OLFACT bowler pygmy",
-		$location[The Middle Chamber] : "can OLFACT tomb rat",
-		$location[The Battlefield (Hippy Uniform)] : "can OLFACT sorority operator",
-
-		$location[The Haunted Laundry Room] : "can get INVISIBLE STRING for use with li'l ghost costume",
-		$location[The Haunted Storage Room] : "can get_all INVISIBLE SEAM RIPPER for use with li'l ghost costume",
-		$location[Lair of the Ninja Snowmen] : "can get INVISIBLE SEAM RIPPER for use with li'l ghost costume",
-	};
-
-	print("\n\nAdventuring at: " + aLocation, "blue");
-	if (notes[aLocation] != "" && !doneOnce) {
-		print(notes[aLocation], "blue");
-		int times = 3;
-		repeat {
-			waitq(5);
-			print(notes[aLocation], "blue");
-			times--;
-		} until (times == 0);
-	}
-
-	set_property(doOnceProperty, "true");
-}
-
-
-boolean isUnlocked(location aLocation) {
-	int questM12PirateCompletion = kQuestM12PirateCompletionMap[get_property("questM12Pirate")];
-
-	if (aLocation == $location[Belowdecks])
-		return questM12PirateCompletion >= 8;
-	if (aLocation == $location[The Poop Deck])
-		return questM12PirateCompletion >= 7;
-	if (aLocation == $location[The F'c'le])
-		return questM12PirateCompletion >= 6;
-
-	return true;
 }
 
 
@@ -624,6 +625,40 @@ int availableFreeCraftTurns() {
 	int inigosFreeCraftTurns = floor(have_effect($effect[Inigo's Incantation of Inspiration]) / 5.0);
 	int cutCornersFreeCraftTurns = 5 - to_int(get_property("_expertCornerCutterUsed"));
 	return inigosFreeCraftTurns + cutCornersFreeCraftTurns;
+}
+
+
+
+// uses historical_price if it can, otherwise tries mall_price, if both of those are zero,
+// checks if npc_price is non-zero and cheaper than at the mall, uses that if so
+int cheapest_price(item anItem) {
+	int buyPrice = historical_price(anItem);
+	if (buyPrice == 0)
+		buyPrice = mall_price(anItem);
+
+	int npcPrice = npc_price(anItem);
+	if (npcPrice != 0 && (buyPrice == 0 || buyPrice > npcPrice))
+		buyPrice = npcPrice;
+
+	return buyPrice;
+}
+
+
+
+boolean have_mats(item craftable, int needed) {
+	foreach mat, amt in get_ingredients(craftable) {
+		int avail = available_amount(mat);
+		if (avail < (amt * needed) && !have_mats(mat, amt)) {
+			print("don't have enough " + mat + " (need: " + (amt*needed) + ", have: " + avail + ") to craft " + needed + " " + craftable);
+			return false;
+		}
+	}
+
+	return true;
+}
+
+boolean have_mats(item craftable) {
+	return have_mats(craftable, 1);
 }
 
 
@@ -712,18 +747,73 @@ int maxAccordionSongs()  {
 
 
 
+item [familiar] my_familiars() {
+	item [familiar] rval;
+	foreach fam in $familiars[] {
+		if (have_familiar(fam))
+			rval[fam] = familiar_equipped_equipment(fam);
+	}
+	return rval;
+}
+
+
+// returns all equipment equipped by any familiar EXCEPT the one we're using (which is considered
+// to be equipped by us and not our familiar)
+int [item] all_familiar_equipped_amount() {
+	int [item] rval;
+	foreach fam in $familiars[] {
+		item famee = familiar_equipped_equipment(fam);
+		if (have_familiar(fam) && my_familiar() != fam)
+			rval[famee] += 1;
+	}
+	return rval;
+}
+
+int familiar_equipped_amount(item anItem) {
+	return all_familiar_equipped_amount()[anItem];
+}
+
+
+void printMyFamiliars() {
+	foreach fam, it in my_familiars() {
+		print(fam + " equipped with: " + it);
+	}
+}
+
+void printMyFamiliarEquippedEquipment() {
+	foreach it, amt in all_familiar_equipped_amount() {
+		print(it + " X " + amt);
+	}
+}
+
+
+
+item [slot] current_equipment() {
+	item [slot] rval;
+
+	foreach aSlot in $slots[] {
+		item eItem = equipped_item(aSlot);
+		if (eItem != $item[none])
+			rval[aSlot] = eItem;
+	}
+
+	return rval;
+}
+
 // prints out all worn equipment
 string logEquipmentString(boolean shortForm) {
+	item [slot] cEquip = current_equipment();
+
 	string [] outputStrings = {
-		$slot[hat] + ": " + equipped_item($slot[hat]) + ", " + $slot[back] + ": " + equipped_item($slot[back]) + ", " + $slot[shirt] + ": " + equipped_item($slot[shirt]),
-		$slot[weapon] + ": " + equipped_item($slot[weapon]) + ", " + $slot[off-hand] + ": " + equipped_item($slot[off-hand]) + ", " + $slot[pants] + ": " + equipped_item($slot[pants]),
-		$slot[acc1] + ": " + equipped_item($slot[acc1]) + ", " + $slot[acc2] + ": " + equipped_item($slot[acc2]) + ", " + $slot[acc3] + ": " + equipped_item($slot[acc3]),
-		"fam: " + my_familiar() + ", " + $slot[familiar] + ": " + equipped_item($slot[familiar])
+		$slot[hat] + ": " + cEquip[$slot[hat]] + "\t" + $slot[back] + ": " + cEquip[$slot[back]] + "\t" + $slot[shirt] + ": " + cEquip[$slot[shirt]],
+		$slot[weapon] + ": " + cEquip[$slot[weapon]] + "\t" + $slot[off-hand] + ": " + cEquip[$slot[off-hand]] + "\t" + $slot[pants] + ": " + cEquip[$slot[pants]],
+		$slot[acc1] + ": " + cEquip[$slot[acc1]] + "\t" + $slot[acc2] + ": " + cEquip[$slot[acc2]] + "\t" + $slot[acc3] + ": " + cEquip[$slot[acc3]],
+		"fam: " + my_familiar() + "\t" + $slot[familiar] + ": " + cEquip[$slot[familiar]]
 	};
 
 	string rval;
 	if (shortForm)
-		rval = joinString(outputStrings, ", ");
+		rval = joinString(outputStrings, "\t");
 	else
 		rval = joinString(outputStrings, "\n");
 
@@ -851,19 +941,47 @@ boolean isPPUseful() {
 
 
 
-boolean isOlfacted(monster aMonster) {
-	boolean isOlfacted = false;
-
-	if (have_effect($effect[On the Trail]) > 0) {
-		if (aMonster == $monster[none])
-			isOlfacted = true;
-		else if (to_monster(get_property("olfactedMonster")) == aMonster)
-			isOlfacted = true;
-	}
-
-	return isOlfacted;
+// returns true if Get a Good Whiff has been called on the given monster and the effect is still active
+boolean gotAGoodWhiff(monster aMonster) {
+	return my_familiar() == $familiar[Nosy Nose] && get_property("nosyNoseMonster").to_monster() == aMonster;
 }
 
+
+// returns true if Gallapagosian Mating Call has been called on the given monster and the effect is still active
+boolean callOfTheGallapagos(monster aMonster) {
+	return get_property("_gallapagosMonster").to_monster() == aMonster;
+}
+
+
+// returns true if the Red-Nosed Snapper will track this monster
+// only returns true if Red-Nosed Snapper is actually equipped
+boolean isGuidedByRedNosedSnapper(monster aMonster) {
+	return my_familiar() == $familiar[Red-Nosed Snapper] && get_property("redSnapperPhylum").to_phylum() == aMonster.phylum;
+}
+
+
+boolean hasBeenOfferedLatte(monster aMonster) {
+	if (get_property("_latteMonster").to_monster() == aMonster // we've offered AND
+		&& get_counters("Latte Monster", 0, 30) != "") // the counter hasn't expired
+		return true;
+	return false;
+}
+
+
+// returns true if the given monster is olfacted
+// if aMonster is none, returns true if ANY monster is olfacted
+boolean isOlfacted(monster aMonster) {
+	if (have_effect($effect[On the Trail]) > 0) {
+		if (aMonster == $monster[none]) // is ANYTHING olfacted
+			return true;
+		else if (to_monster(get_property("olfactedMonster")) == aMonster)
+			return true;
+	}
+
+	return false;
+}
+
+// returns true if at least one target monster is olfacted
 boolean isOlfacted(monster [] targetMonsters) {
 	foreach idx, aMonster in targetMonsters {
 		if (isOlfacted(aMonster))
@@ -871,6 +989,24 @@ boolean isOlfacted(monster [] targetMonsters) {
 	}
 
 	return false;
+}
+
+
+
+// returns the number of copies of the given monster in the monster queue of the location associated with the monster
+// unless the monster is olfacted or sniffed or offered latte or... or... or... this will return 1
+int monsterQueueCopies(monster aMonster) {
+	int rval = 1;
+
+	if (isOlfacted(aMonster)) rval += 3;
+	if (hasBeenOfferedLatte(aMonster)) rval += 2;
+	if (callOfTheGallapagos(aMonster)) rval += 1;
+	if (isGuidedByRedNosedSnapper(aMonster)) rval += 2;
+	if (gotAGoodWhiff(aMonster)) rval += 1;
+	if (aMonster.phylum == $phylum[beast] && have_effect($effect[A Beastly Odor]) > 0) rval += 2;
+	if (aMonster.phylum == $phylum[dude] && have_effect($effect[Ew, The Humanity]) > 0) rval += 2;
+
+	return rval;
 }
 
 
@@ -917,8 +1053,14 @@ boolean is_gift(item anItem) {
 }
 
 
+int [item] gSkillbooks = {
+	$item[the Crymbich Manuscript] :					available_amount($item[the Crymbich Manuscript]),
+	$item[Island Drinkin', a Tiki Mixology Odyssey] :	available_amount($item[Island Drinkin', a Tiki Mixology Odyssey]),
+	$item[My Life of Crime, a Memoir] :					available_amount($item[My Life of Crime, a Memoir]),
+};
+// TODO can probably sniff this somehow -- certainly by search the description for "skillbook"
 boolean is_skillbook(item anItem) {
-	return anItem == $item[the Crymbich Manuscript];
+	return gSkillbooks contains anItem;
 }
 
 
@@ -933,6 +1075,73 @@ int familarWeight(familiar fam) {
 
 
 
+boolean isUnlocked(location aLocation) {
+	int questM12PirateCompletion = kQuestM12PirateCompletionMap[get_property("questM12Pirate")];
+
+	if (aLocation == $location[Belowdecks])
+		return questM12PirateCompletion >= 8;
+	if (aLocation == $location[The Poop Deck])
+		return questM12PirateCompletion >= 7;
+	if (aLocation == $location[The F'c'le])
+		return questM12PirateCompletion >= 6;
+	if (aLocation == $location[Cobb's Knob Menagerie, Level 1] || aLocation == $location[Cobb's Knob Menagerie, Level 2] || aLocation == $location[Cobb's Knob Menagerie, Level 3])
+		return have_item($item[Cobb's Knob Menagerie key]);
+
+	return true;
+}
+
+
+// prints useful info for the location we're about to adventure in
+// only prints the info once per day per location
+void notesForLocation(location aLocation) { // location notes locationnotes
+	string doOnceProperty = "_smm.DoOnceNotesForLocation" + aLocation;
+	boolean doneOnce = to_boolean(get_property(doOnceProperty));
+
+	string [location] notes = {
+		$location[The Fungal Nethers] : "can OLFACT angry fungus",
+		$location[Thugnderdome] : "can OLFACT gnarly and gnasty gnome",
+		$location[8-bit realm] : "can OLFACT blooper",
+		$location[The Haunted Library] : "can OLFACT writing desk",
+		$location[The Defiled Niche] : "can OLFACT dirty old lihc",
+		$location[The Goatlet] : "can OLFACT dairy goat",
+		$location[Twin Peak] : "can OLFACT topiary",
+		$location[The Hidden Temple] : "can OLFACT sheep",
+		$location[The Haunted Wine Cellar] : "can OLFACT possessed wine rack",
+		$location[The Haunted Laundry Room] : "can OLFACT cabinet",
+		$location[The Haunted Boiler Room] : "can OLFACT boiler",
+		$location[The Penultimate Fantasy Airship] : "can OLFACT healer",
+		$location[Belowdecks] : "can OLFACT gaudy pirate",
+		$location[The Hidden Bowling Alley] : "can OLFACT bowler pygmy",
+		$location[The Middle Chamber] : "can OLFACT tomb rat",
+		$location[The Battlefield (Hippy Uniform)] : "can OLFACT sorority operator",
+
+		$location[The Haunted Laundry Room] : "can get INVISIBLE STRING for use with li'l ghost costume",
+		$location[The Haunted Storage Room] : "can get_all INVISIBLE SEAM RIPPER for use with li'l ghost costume",
+		$location[Lair of the Ninja Snowmen] : "can get INVISIBLE SEAM RIPPER for use with li'l ghost costume",
+	};
+
+	print("\n\nAdventuring at: " + aLocation, "blue");
+	if (notes[aLocation] != "" && !doneOnce) {
+		print(notes[aLocation], "blue");
+		int times = 3;
+		repeat {
+			waitq(5);
+			print(notes[aLocation], "blue");
+			times--;
+		} until (times == 0);
+	}
+
+	set_property(doOnceProperty, "true");
+}
+
+
+
+boolean isCopyable(monster aMonster) {
+	return !aMonster.boss;
+}
+
+
+
 // -------------------------------------
 // MOOD UTILITIES
 // -------------------------------------
@@ -943,6 +1152,7 @@ string moodStringAppend(string moodString, string stringToAppend) {
 }
 
 
+// songs to sing, in order, if we don't have other songs filling our head
 // TODO different songs depending on situation
 skill [] defaultSongs() {
 	skill [] rval = {
@@ -955,8 +1165,23 @@ skill [] defaultSongs() {
 }
 
 
+// default facial expression
 skill defaultFacialExpression() {
-	return $skill[Patient Smile];
+	if (my_primestat() == $stat[muscle])
+		return $skill[Patient Smile];
+	else if (my_primestat() == $stat[mysticality]) {
+		if (have_skill($skill[Inscrutable Gaze]))
+			return $skill[Inscrutable Gaze];
+		else
+			return $skill[Wry Smile];
+	} else
+		return $skill[Knowing Smile];
+}
+
+
+// default use for soul sauce
+skill defaultSoulsauce() {
+	return $skill[Soul Rotation];
 }
 
 
@@ -1052,12 +1277,15 @@ void moodExecute() {
 	cli_execute("mood execute");
 
 	string currentMood = get_property("currentMood");
+
 	// auto-fill songs and facial expression with something
 	if (!inRonin() && currentMood != "apathetic") { // don't auto-fill in ronin
+		// EXPRESSION
 		if (activeFacialExpression() == $skill[none])
 			if (!use_skill(1, defaultFacialExpression()))
-				abort("could not fill facial expression with " + defaultFacialExpression());
+				abort("moodExecute: could not fill facial expression with " + defaultFacialExpression());
 
+		// SONGS
 		int songSpace = maxAccordionSongs() - count(activeSongs());
 		foreach idx, buffSkill in defaultSongs() {
 			if (songSpace == 0) break;
@@ -1065,9 +1293,16 @@ void moodExecute() {
 				if (use_skill(1, buffSkill))
 					songSpace--;
 				else
-					abort("could not fill song space with " + buffSkill);
+					abort("moodExecute: could not fill song space with " + buffSkill);
 			}
 		}
+	}
+
+	// SOUL SAUCE
+	if (my_soulsauce() >= 95) {
+		boolean sexy;
+		sexy = use_skill(1, defaultSoulsauce());
+		assert(sexy, "moodExecute: could not spend soul sauce on " + defaultSoulsauce());
 	}
 }
 
@@ -1465,62 +1700,6 @@ boolean isErrorPage(string checkPage) {
 
 
 
-void preAdventureChecks(int checkTurns) {
-	print("**RUNNING pre-adventure script** " + checkTurns + " turns in advance", "blue");
-
-	if (my_adventures() == 0) abort("Out of adventures!");
-
-	check_counters(checkTurns, kAbortOnCounter);
-
-	burnExtraMP();
-
-	if (count(get_goals()) > 0)
-		set_property(kHadGoalsKey, "true");
-	else
-		set_property(kHadGoalsKey, "false");
-}
-
-void preAdventureChecks() {
-	preAdventureChecks(0);
-}
-
-
-// Adventure using visit_url instead of adventure() -- but also attempts to do all the pre-stuff that adventure() does.
-// Post-stuff will have to be done elsewhere... Useful when you want the pre-automation of adventure() without the turn
-// automation or the post-automation that can kill scripts (such as when you get Beaten Up during an adventure)
-// checkTurns is the number of turns to check ahead for counter expiry, default is 0, i.e. next turn
-// Returns the text of the page returned by visit_url
-// Typically, this will return mid-adventure, so you will need to run_turn() or whatever after this.
-string advURL(string aURL, int checkTurns, boolean isPost, boolean urlEncoded) {
-	preAdventureChecks(checkTurns);
-	logEquipment(true);
-	string rval = visit_url(aURL, isPost, urlEncoded);
-	return rval;
-}
-
-string advURL(string aLocation, boolean isPost, boolean urlEncoded) {
-	return advURL(aLocation, 0, isPost, urlEncoded);
-}
-
-string advURL(string aLocation) {
-	return advURL(aLocation, 0, false, false);
-}
-
-string advURL(location aLocation, int checkTurns, boolean isPost, boolean urlEncoded) {
-	notesForLocation(aLocation);
-	return advURL(to_url(aLocation), checkTurns, isPost, urlEncoded);
-}
-
-string advURL(location aLocation, int checkTurns) {
-	return advURL(to_url(aLocation), checkTurns, false, false);
-}
-
-string advURL(location aLocation) {
-	return advURL(aLocation, 0);
-}
-
-
-
 string makeClickableCommand(string commandName, string command, boolean confirm) {
 	string confirm_string = "confirm+";
 	if (!confirm) confirm_string = "";
@@ -1565,6 +1744,10 @@ boolean isPizzaWorkshed() {
 
 boolean isAsdonWorkshed() {
 	return get_workshed() == $item[Asdon Martin keyfob];
+}
+
+boolean isColdMedicineWorkshed() {
+	return get_workshed() == $item[cold medicine cabinet];
 }
 
 
@@ -1713,7 +1896,8 @@ boolean wantsToEquip(string maxString, slot checkSlot) {
 // returns true if the given maximize string allows equipping the given item
 // i.e. we're not already equipping an item in the same slot
 boolean canEquipWithMaxString(string maxString, item anItem) {
-	return ((!maxString.wantsToEquip(to_slot(anItem))) && (!maxString.wantsToNotEquip(anItem)));
+	string actualMaxString = expandOutfits(maxString);
+	return ((!actualMaxString.wantsToEquip(to_slot(anItem))) && (!actualMaxString.wantsToNotEquip(anItem)));
 }
 
 // returns true if the current automated dressup string allows equipping the given item
@@ -1809,6 +1993,355 @@ string equipStringForAction(ActionRecord theAction) {
 	if (theAction.itemToUse != $item[none] && !theAction.itemToUse.combat) // assumes all non-combat items are equippable and all combat items are not equippable
 		rval = "equip " + theAction.itemToUse;
 	return rval;
+}
+
+
+
+void printPSR(PrioritySkillRecord toPrint) {
+	print("[" + toPrint.priority + "]" + toPrint.theSkill
+		+ " with item " + toPrint.theItem + "@" + toPrint.meatCost
+		+ ", " + toPrint.usesAvailable
+		+ " uses, available now: " + toPrint.isAvailableNow);
+}
+
+void printPSRArray(PrioritySkillRecord [] arrayToPrint) {
+	print("");
+	foreach psrIndex, psrToPrint in arrayToPrint
+		printPSR(psrToPrint);
+}
+
+
+
+// take the floor of the priority: the lowest of those goes first, ties are broken first by number of uses available, then by the fractional part of the priority
+PrioritySkillRecord skillToUse(PrioritySkillRecord [] skillData, location aLocation, int maxPerTurnCost, PrioritySkillRecord [] excludedSkills) {
+	boolean isInCombat = inCombat();
+	print("skillToUse, in combat: " + isInCombat + ", location: " + aLocation + ", maxPerTurnCost: " + maxPerTurnCost);
+// 	printPSRArray(skillData);
+	PrioritySkillRecord psr;
+
+	// start by getting the set of skills with the same lowest integer priority with usesAvailable > 0 and isAvailableNow
+	PrioritySkillRecord [int] setOfSkillsSamePriority;
+	int prioritySetIndex = 0;
+	int lowestIntegerPriority = kMaxInt;
+	foreach idx in skillData {
+		psr = skillData[idx];
+		if (arrayContains(excludedSkills, psr)) {
+			print("excluding " + psr.theSkill);
+			continue;
+		}
+		if (truncate(psr.priority) == lowestIntegerPriority && psr.usesAvailable > 0 && psr.isAvailableNow) {
+			setOfSkillsSamePriority[prioritySetIndex++] = psr;
+		} else if (truncate(psr.priority) < lowestIntegerPriority && psr.usesAvailable > 0 && psr.isAvailableNow) {
+			prioritySetIndex = 0;
+			clear(setOfSkillsSamePriority);
+			setOfSkillsSamePriority[prioritySetIndex++] = psr;
+			lowestIntegerPriority = truncate(psr.priority);
+		}
+	}
+	// should end up with a set of skills with the lowest integer priority and all available to use now
+// 	printPSRArray(setOfSkillsSamePriority);
+
+	// select the set of skills with the highest usesAvailable within the results so far
+	PrioritySkillRecord [int] setOfSkillsSameUses;
+	prioritySetIndex = 0;
+	int highestAvailableUses = 0;
+	foreach idx in setOfSkillsSamePriority {
+		psr = setOfSkillsSamePriority[idx];
+		if (psr.usesAvailable == highestAvailableUses) {
+			setOfSkillsSameUses[prioritySetIndex++] = psr;
+		} else if (psr.usesAvailable > highestAvailableUses) {
+			prioritySetIndex = 0;
+			clear(setOfSkillsSameUses);
+			setOfSkillsSameUses[prioritySetIndex++] = psr;
+			highestAvailableUses = psr.usesAvailable;
+		}
+	}
+	// should end up with a set of skills with the lowest integer priority and highest usesAvailable
+// 	printPSRArray(setOfSkillsSameUses);
+
+	// select the skill with the highest fractional priority within the results so far
+	PrioritySkillRecord [int] setOfSkillsLowestPriority;
+	prioritySetIndex = 0;
+	float lowestPriority = kMaxInt;
+	foreach idx in setOfSkillsSameUses {
+		psr = setOfSkillsSameUses[idx];
+		if (psr.priority == lowestPriority) {
+			setOfSkillsLowestPriority[prioritySetIndex++] = psr;
+		} else if (psr.priority < lowestPriority) {
+			prioritySetIndex = 0;
+			clear(setOfSkillsLowestPriority);
+			setOfSkillsLowestPriority[prioritySetIndex++] = psr;
+			lowestPriority = psr.priority;
+		}
+	}
+
+	print("skillToUse final recommendations:");
+	printPSRArray(setOfSkillsLowestPriority);
+	// choose one of the remaining and make sure we can use it
+	int i = 0;
+	while (i < count(setOfSkillsLowestPriority)) {
+		psr = setOfSkillsSameUses[i];
+		if (psr.theSkill == $skill[none] // no skill means we're prioritizing items that we don't have to equip, in which case, return the first one
+			|| psr.theItem == $item[none] || equipped_amount(psr.theItem) > 0 // otherwise, make sure we can equip the item
+			|| (!isInCombat && can_equip(psr.theItem) && canEquipWithExistingAutomatedDressup(psr.theItem)))
+			break;
+		i++;
+	}
+
+	// if all the recommended are invalid (mostly because we can't equip the item for
+	// one reason or another -- not enough stats usually), add everything we got to the
+	// existing excludeSkills and try again
+// 	if(count(setOfSkillsLowestPriority) > 0 && i >= count(setOfSkillsLowestPriority)) {
+// 		print("chosen item can't be equipped, trying again", "orange");
+// 		foreach idx, psr in excludedSkills
+// 			setOfSkillsLowestPriority[i++] = psr;
+// 		return skillToUse(skillData, aLocation, maxPerTurnCost, setOfSkillsLowestPriority);
+// 	}
+
+	print("choosing number " + i);
+	printPSR(setOfSkillsLowestPriority[i]);
+	return setOfSkillsLowestPriority[i];
+}
+
+PrioritySkillRecord topPriority(PrioritySkillRecord [] priorityData) {
+	PrioritySkillRecord [] excludedData;
+	return skillToUse(priorityData, $location[none], kMaxInt, excludedData);
+}
+
+
+
+// -------------------------------------
+// FINANCIAL UTILITIES ITEM UTILITIES MEAT UTILITIES ECONOMIC UTILTIES
+// -------------------------------------
+
+
+string rawDisplayCase() {
+	return visit_url("/displaycollection.php?who=" + my_id(), true, false);
+}
+
+
+string [] shelves() {
+	string [int] rval;
+	string pageString = rawDisplayCase();
+	matcher shelfMatcher = create_matcher("shelf([\\d]+)\\\"\\);\\\' class=nounder><font color=white>([\\w ]+?)</font>", pageString);
+	while (find(shelfMatcher)) {
+		int shelfNumber = to_int(group(shelfMatcher, 1));
+		string shelfName = group(shelfMatcher, 2);
+		rval[shelfNumber] = shelfName;
+	}
+	return rval;
+}
+
+
+int [item] shelfItems(string pageString, string shelfName) {
+	int [item] rval;
+
+	matcher shelfMatcher = create_matcher("<table.+?(shelf[0-9]+).+?" + shelfName + ".+?(shelf[0-9]+)(.+?)</table>", pageString);
+	find(shelfMatcher);
+	string shelfId = group(shelfMatcher, 1);
+	string shelfPage = group(shelfMatcher, 3);
+
+	matcher listMatcher = create_matcher("<td valign=center><b>(.*?)</b> ?\\(?([0-9,]*)\\)?</td>", shelfPage);
+	while (find(listMatcher)) {
+		item anItem = group(listMatcher, 1).to_item();
+		int itemAmount = to_int(group(listMatcher, 2));
+		rval[anItem] = itemAmount;
+	}
+
+	return rval;
+}
+
+int [item] shelfItems(string shelfName) {
+	return shelfItems(rawDisplayCase(), shelfName);
+}
+
+
+
+// returns the value of the given index without having to dereference the string
+int amountAtRank(int aRank, int [int, string] aCollection) {
+	int totalCount = 0;
+	foreach rank, name, num in aCollection {
+		totalCount++;
+		if (totalCount == aRank)
+			return num;
+	}
+	abort("could not find amount at rank " + aRank);
+	return 0;
+}
+
+
+string nameAtRank(int aRank, int [int, string] aCollection) {
+	int totalCount = 0;
+	foreach rank, name, num in aCollection {
+		totalCount++;
+		if (totalCount == aRank)
+			return name;
+	}
+	abort("could not find name at rank " + aRank);
+	return 0;
+}
+
+
+int rank1Amount(int [int, string] collection) {
+	return amountAtRank(1, collection);
+}
+
+int rank10Amount(int [int, string] collection) {
+	return amountAtRank(10, collection);
+}
+
+IntRange collectionRange(int [int, string] collection) {
+	IntRange rval;
+	rval.top = rank1Amount(collection);
+	rval.bottom = rank10Amount(collection);
+	return rval;
+}
+
+
+// returns true if the given item is in the top 10
+boolean in_top10(item anItem, int [int, string] collection) {
+	return display_amount(anItem) >= rank10Amount(collection);
+}
+
+
+// ensure there are 10 or 11 entries and that the ranks go sequentially from 1
+boolean isValidTop10List(int [int, string] top10List) {
+	int followRank = 1;
+	int ties = 0;
+	int totalCount = 0;
+	foreach rank, name, num in top10List {
+		totalCount++;
+// 		print("totalCount: " + totalCount + ", followRank: " + followRank + ", ties: " + ties + ", rank: " + rank + ", name: " + name + ", num: " + num);
+		// sequential order
+		if (rank == followRank) {
+			followRank++;
+			continue;
+		}
+		// same rank as last, i.e. a tie
+		if (rank == followRank - 1) {
+			ties++;
+			continue;
+		}
+		// the rank after a number of ties
+		if (ties > 0 && followRank + ties == rank) {
+			ties = 0;
+			followRank = rank + 1;
+			continue;
+		}
+		return false;
+	}
+
+	if (totalCount != 10 && totalCount != 11)
+		return false;
+
+	return true;
+}
+
+
+string toStringCompact(int [int, string] top10List) {
+	string rval;
+	foreach rank, name, num in top10List {
+		rval += rank + ". " + name + ": " + num + ", ";
+	}
+	return rval;
+}
+
+string toString(int [int, string] top10List) {
+	string rval;
+	foreach rank, name, num in top10List {
+		rval += rank + ". " + name + ": " + num + "</br>\n";
+	}
+	return rval;
+}
+
+void printTop10List(int [int, string] top10List) {
+	print_html(toString(top10List));
+}
+
+
+// returns the top 10 list -- value is the number of items, indexed by user name and the top 10 rank number
+// tries Jicken Wings first, then the wiki if that doesn't work
+int [int, string] lookupCollection(item anItem) {
+	int [int, string] top10List;
+
+	if (property_exists(kDCPropertyPrefix + anItem)) {
+		// CACHED
+		print("[" + anItem.to_int() + "]" + anItem + " @ " + cheapest_price(anItem));
+		string cacheString = get_property(kDCPropertyPrefix + anItem);
+		matcher cacheMatcher = create_matcher("([0-9]+)\. (.*?): ([0-9]+), ", cacheString);
+		while (find(cacheMatcher)) {
+			int rank = group(cacheMatcher, 1).to_int();
+			string name = group(cacheMatcher, 2);
+			int amt = group(cacheMatcher, 3).to_int();
+			top10List[rank, name] = amt;
+		}
+
+	} else {
+		// NOT CACHED
+		string pageString = visit_url("http://dcdb.coldfront.net/collections/index.cgi?query_value=" + to_int(anItem) + "&query_type=item", true, false);
+
+		matcher itemMatcher = create_matcher("<tr><td bgcolor=\"blue\" align=\"center\" valign=\"center\"><font color=\"white\"><b>(.*) \\(#([0-9]+)\\)</b></font></td></tr>", pageString);
+		assert(find(itemMatcher), "lookupCollection: could not find the item name in Jicken Wings");
+		print("[" + group(itemMatcher, 2) + "]" + group(itemMatcher, 1) + " @ " + cheapest_price(anItem));
+
+		matcher range_matcher = create_matcher("<tr><td bgcolor=\"white\" align=\"center\" valign=\"center\"><b>([0-9]+)</b></td>.*?<b>([^<]*)</b>.*?<b>([0-9,]+)</b></td></tr>", pageString);
+		for i from 1 to 11 {
+			boolean found = find(range_matcher);
+			if (!found && i < 11) {
+				if (i > 1) abort("unexpected error");
+				print("problem matching the Top 10 list from coldfront, trying wiki");
+				pageString = visit_url("https://kol.coldfront.net/thekolwiki/index.php/" + anItem.replace_string(" ", "_"), true, false);
+				range_matcher = create_matcher("[0-9]+\. <a href=.*?player'>(.*?) - ([0-9]+)</a>", pageString);
+				if (!find(range_matcher)) abort("wiki didn't work either");
+			} else if (!found && i == 11) { // the wiki doesn't have entry #11
+				continue;
+			}
+			top10List[group(range_matcher, 1).to_int(), group(range_matcher, 2)] = to_int(group(range_matcher, 3));
+		}
+	}
+
+	assert(isValidTop10List(top10List), "lookupCollection: something wrong with the top 10 list:\n" + toString(top10List));
+	set_property(kDCPropertyPrefix + anItem, toStringCompact(top10List));
+
+	return top10List;
+}
+
+
+
+void printReceiptItem(item anItem, int amt, int price) {
+	print(amt + "X " + anItem + " @ " + price, "green");
+}
+
+int receiptTotal(int [item] receipt, boolean printTotal) {
+	int numItems, meat;
+	foreach anItem in receipt {
+		numItems += receipt[anItem];
+		meat += cheapest_price(anItem) * receipt[anItem];
+	}
+	cprint(printTotal, "TOTAL of " + numItems + " items @ " + meat + " meat (estimated)", "green");
+	return meat;
+}
+
+int printReceipt(int [item] receipt, boolean printTotal) {
+	int numItems, meat;
+	foreach anItem in receipt {
+		int buyPrice = cheapest_price(anItem);
+		printReceiptItem(anItem, receipt[anItem], buyPrice);
+		numItems += receipt[anItem];
+		meat += buyPrice * receipt[anItem];
+	}
+	cprint(printTotal, "TOTAL of " + numItems + " items @ " + meat + " meat (estimated)", "green");
+	return meat;
+}
+
+int printReceipt(int [item] receipt) {
+	return printReceipt(receipt, true);
+}
+
+
+
+// TODO economics of frat/hippy war items
+void warProfiteering() {
 }
 
 
@@ -1929,131 +2462,148 @@ boolean stockItem(int limit, int stockAmount, item theItem) {
 }
 
 
-void printReceipt(int [item] receipt) {
-	int items, meat;
-	foreach anItem in receipt {
-		print(receipt[anItem] + "X " + anItem + " @ " + historical_price(anItem), "green");
-		items += receipt[anItem];
-		meat += historical_price(anItem) * receipt[anItem];
+
+// given an array of amounts indexed by items and prices, will attempt to purchase the amount of each item at the specified price.
+void buySpecials(int [item, int] buyMap) {
+	int startingMeat = my_meat();
+	int [item] receipt;
+
+	batch_open();
+	foreach buyItem, price, amount in buyMap {
+		int itemsBought;
+		print("buying " + amount + "x " + buyItem + "@" + price);
+		if (!inRonin())
+			itemsBought = buy(amount, buyItem, price);
+		else
+			itemsBought = buy_using_storage(amount, buyItem, price);
+
+		if (itemsBought > 0)
+			receipt[buyItem] = itemsBought;
 	}
-	print("TOTAL of " + items + " items @ " + meat + " meat (estimated)", "green");
+	boolean success = batch_close();
+	if (!success) abort("buy batch wasn't successful!");
+
+	print("buySpecials receipt:");
+	printReceipt(receipt);
+	print("actual meat spent: " + (startingMeat - my_meat()), "blue");
 }
 
 
 
-void printPSR(PrioritySkillRecord toPrint) {
-	print("[" + toPrint.priority + "]" + toPrint.theSkill
-		+ " with item " + toPrint.theItem + "@" + toPrint.meatCost
-		+ ", " + toPrint.usesAvailable
-		+ " uses, available now: " + toPrint.isAvailableNow);
+// returns the possible profit from buying materials and selling the result (or vice versa)
+int arbitrage(item arbIt, boolean shouldPrint) {
+	int craftingCost;
+	int buyPrice = cheapest_price(arbIt);
+
+	cprint(shouldPrint, arbIt + " selling for " + buyPrice);
+	int [item] ingredients = get_ingredients(arbIt);
+	if (count(ingredients) > 0) {
+		int amtMeatPaste = count(ingredients) - 1;
+		cprint(shouldPrint, "crafting breakdown:");
+		if (shouldPrint) {
+			printReceiptItem($item[meat paste], amtMeatPaste, 10);
+			craftingCost = printReceipt(ingredients, false) + (amtMeatPaste * 10);
+		} else
+			craftingCost = receiptTotal(ingredients, false) + (amtMeatPaste * 10);
+		cprint(shouldPrint, "TOTAL of " + (count(ingredients) + 1) + " ingredients @ " + craftingCost + " meat (estimated)", "green");
+	} else {
+		cprint(shouldPrint, "not craftable");
+	}
+
+	int profit = buyPrice - craftingCost;
+	cprint(shouldPrint, "potential profit: " + profit);
+	return profit;
 }
 
-void printPSRArray(PrioritySkillRecord [] arrayToPrint) {
-	print("");
-	foreach psrIndex, psrToPrint in arrayToPrint
-		printPSR(psrToPrint);
+int arbitrage(item arbIt) {
+	return arbitrage(arbIt, true);
 }
 
 
+// recursive arbitrage
+int arrbitrage(item arbIt, boolean shouldPrint) {
+	int profit;
 
-// take the floor of the priority: the lowest of those goes first, ties are broken first by number of uses available, then by the fractional part of the priority
-PrioritySkillRecord skillToUse(PrioritySkillRecord [] skillData, location aLocation, int maxPerTurnCost, SkillRecord [] excludedSkills) {
-	boolean isInCombat = inCombat();
-	print("skillToUse, in combat: " + isInCombat + ", location: " + aLocation + ", maxPerTurnCost: " + maxPerTurnCost);
-	printPSRArray(skillData);
-	PrioritySkillRecord psr;
-
-	// start by getting the set of skills with the same lowest integer priority and usesAvailable > 0 and isAvailableNow
-	PrioritySkillRecord [int] setOfSkillsSamePriority;
-	int prioritySetIndex = 0;
-	int lowestIntegerPriority = kMaxInt;
-	foreach idx in skillData {
-		psr = skillData[idx];
-		if (arrayContains(excludedSkills, psr)) {
-			print("excluding " + psr.theSkill);
-			continue;
-		}
-		if (truncate(psr.priority) == lowestIntegerPriority && psr.usesAvailable > 0 && psr.isAvailableNow) {
-			setOfSkillsSamePriority[prioritySetIndex++] = psr;
-		} else if (truncate(psr.priority) < lowestIntegerPriority && psr.usesAvailable > 0 && psr.isAvailableNow) {
-			prioritySetIndex = 0;
-			clear(setOfSkillsSamePriority);
-			setOfSkillsSamePriority[prioritySetIndex++] = psr;
-			lowestIntegerPriority = truncate(psr.priority);
-		}
-	}
-	// should end up with a set of skills with the lowest integer priority and all available to use now
-// 	printPSRArray(setOfSkillsSamePriority);
-
-	// select the set of skills with the highest usesAvailable within the results so far
-	PrioritySkillRecord [int] setOfSkillsSameUses;
-	prioritySetIndex = 0;
-	int highestAvailableUses = 0;
-	foreach idx in setOfSkillsSamePriority {
-		psr = setOfSkillsSamePriority[idx];
-		if (psr.usesAvailable == highestAvailableUses) {
-			setOfSkillsSameUses[prioritySetIndex++] = psr;
-		} else if (psr.usesAvailable > highestAvailableUses) {
-			prioritySetIndex = 0;
-			clear(setOfSkillsSameUses);
-			setOfSkillsSameUses[prioritySetIndex++] = psr;
-			highestAvailableUses = psr.usesAvailable;
-		}
-	}
-	// should end up with a set of skills with the lowest integer priority and highest usesAvailable
-// 	printPSRArray(setOfSkillsSameUses);
-
-	// select the skill with the highest fractional priority within the results so far
-	PrioritySkillRecord [int] setOfSkillsLowestPriority;
-	prioritySetIndex = 0;
-	float lowestPriority = kMaxInt;
-	foreach idx in setOfSkillsSameUses {
-		psr = setOfSkillsSameUses[idx];
-		if (psr.priority == lowestPriority) {
-			setOfSkillsLowestPriority[prioritySetIndex++] = psr;
-		} else if (psr.priority < lowestPriority) {
-			prioritySetIndex = 0;
-			clear(setOfSkillsLowestPriority);
-			setOfSkillsLowestPriority[prioritySetIndex++] = psr;
-			lowestPriority = psr.priority;
+	profit = arbitrage(arbIt, shouldPrint);
+	int [item] ingredients = get_ingredients(arbIt);
+	if (count(ingredients) > 0) {
+		foreach it, amt in ingredients {
+			if (count(get_ingredients(it)) > 0)
+				profit += arrbitrage(it, shouldPrint);
 		}
 	}
 
-	printPSRArray(setOfSkillsLowestPriority);
-	// choose one of the remaining and make sure we can use it
-	int i = 0;
-	while (i < count(setOfSkillsLowestPriority)) {
-		psr = setOfSkillsSameUses[i];
-		if (psr.theSkill == $skill[none] // no skill means we're prioritizing items that we don't have to equip, in which case, return the first one
-			|| psr.theItem == $item[none] || equipped_amount(psr.theItem) > 0 // otherwise, make sure we can equip the item
-			|| (!isInCombat && can_equip(psr.theItem) && canEquipWithExistingAutomatedDressup(psr.theItem)))
-			break;
-		i++;
+	cprint(shouldPrint, "total potential profit on " + arbIt + ": " + profit);
+	return profit;
+}
+
+int arrbitrage(item arbIt) {
+	return arrbitrage(arbIt, true);
+}
+
+
+
+// tries to make a profit by buying the ingredients, crafting arbIt, and putting on the market
+// TODO: make a profit by untinkering?
+void doArbitrage(item arbIt, int stockTarget) {
+	int mallPrice = cheapest_price(arbIt);
+	int kMinProfitThreshold = max(ceil(mallPrice * 0.05), 100);
+
+	int amountToCraft = max(stockTarget - shop_amount(arbIt), 0);
+	int profit = arbitrage(arbIt, true);
+	print("doArbitrage: " + arbIt + " stock target: " + stockTarget + " current stock: " + shop_amount(arbIt) + " delta: " + amountToCraft + ", expected profit per item: " + profit, "green");
+	if (profit < kMinProfitThreshold) {
+		print("not enough profit to be made on " + arbIt);
+		return;
 	}
 
-	// if all the recommended are invalid (mostly because we can't equip the item for
-	// one reason or another -- not enough stats usually), exclude all we got and try again
-	// TODO FIXME merge excluded arrays
-// 	if(count(setOfBanishesLowestPriority) > 0) {
-// 		print("chosen banisher can't be equipped, trying again", "orange");
-// 		return banishToUse(isInCombat, aLocation, ignoreCost, setOfBanishesLowestPriority);
-// 	}
+	int [item] ingredients = get_ingredients(arbIt);
+	if (count(ingredients) > 0) {
+		foreach it, amt in ingredients {
+			int amtToBuy = amt * amountToCraft;
+			int maxPrice = max(ceil(historical_price(it) * 1.01), 100);
+			if (buy(it, amtToBuy, maxPrice) != amtToBuy)
+				abort("count not buy " + amtToBuy + " of " + it + " @ " + maxPrice);
+		}
+	} else {
+		print("we can't craft " + arbIt + ", no arbitrage opportunities");
+		return;
+	}
 
-	print("choosing number " + i);
-	printPSR(setOfSkillsLowestPriority[i]);
-	return setOfSkillsLowestPriority[i];
+	if (!create(amountToCraft, arbIt))
+		abort("creating " + amountToCraft + "x " + arbIt + " failed");
+
+	stockItem(mallPrice, 0, stockTarget, 0, arbIt);
 }
 
-PrioritySkillRecord topPriority(PrioritySkillRecord [] priorityData) {
-	SkillRecord [] excludedData;
-	return skillToUse(priorityData, $location[none], kMaxInt, excludedData);
+
+void doArrbitrage(item arbIt, int stockTarget) {
+	int mallPrice = mall_price(arbIt);
+	int kMinProfitThreshold = max(ceil(mallPrice * 0.05), 100);
+
+	int amountToCraft = max(stockTarget - shop_amount(arbIt), 0);
+	int profit = arrbitrage(arbIt, false);
+// 	print("doArrbitrage: " + arbIt + " stock target: " + stockTarget + " current stock: " + shop_amount(arbIt) + " delta: " + amountToCraft + ", expected profit per item: " + profit, "green");
+	if (profit < kMinProfitThreshold) {
+		print("not enough profit to be made on " + arbIt);
+		return;
+	}
+
+	doArbitrage(arbIt, stockTarget);
+	int [item] ingredients = get_ingredients(arbIt);
+	if (count(ingredients) > 0) {
+		foreach it, amt in ingredients {
+			if (count(get_ingredients(it)) > 0) {
+				print("");
+				doArrbitrage(it, stockTarget);
+			}
+		}
+	} else {
+		print("we can't craft " + arbIt + ", no arbitrage opportunities");
+		return;
+	}
 }
 
-
-
-// -------------------------------------
-// FINANCIAL UTILITIES ITEM UTILITIES MEAT UTILITIES
-// -------------------------------------
 
 
 string itemDescription(item anItem) {
@@ -2109,6 +2659,8 @@ void printMonsterDetails(monster aMonster) {
 	print("phylum: " + aMonster.phylum);
 	print("poison: " + aMonster.poison);
 	print("boss: " + aMonster.boss);
+	foreach aMod in aMonster.random_modifiers
+		print("random_modifiers: " + aMod);
 }
 
 
@@ -2136,15 +2688,34 @@ void printItemDetails(item anItem) {
 
 
 
+void printLocationDetails(location aLocation) {
+	print("[" + aLocation.to_int() + "]" + aLocation);
+	print("combat_percent: " + aLocation.combat_percent);
+	print("zone: " + aLocation.zone);
+	print("parent: " + aLocation.parent);
+	print("parentdesc: " + aLocation.parentdesc);
+	print("environment: " + aLocation.environment);
+	print("bounty: " + aLocation.bounty);
+	print("combat_queue: " + aLocation.combat_queue);
+	print("noncombat_queue: " + aLocation.noncombat_queue);
+	print("turns_spent: " + aLocation.turns_spent);
+	print("kisses: " + aLocation.kisses);
+	print("recommended_stat: " + aLocation.recommended_stat);
+	print("water_level: " + aLocation.water_level);
+	print("wanderers: " + aLocation.wanderers);
+}
+
+
+
 // returns the cost of the given item per buff given, including the number used and the opportunity cost of using it
 int analyzeItem(item itemToAnalyze, int buff, int useAmount, int opportunityCost) {
-	return ((mall_price(itemToAnalyze) * useAmount) + opportunityCost) / buff;
+	return ((historical_price(itemToAnalyze) * useAmount) + opportunityCost) / buff;
 }
 
 
 // returns the cost of the given item per buffAmount given, including the number used and the opportunity cost of using it
 int costPerBuffTurn(item itemToAnalyze, int buffAmount, int duration, int opportunityCost) {
-	return round((mall_price(itemToAnalyze).to_float() + opportunityCost) / buffAmount / duration);
+	return round((historical_price(itemToAnalyze).to_float() + opportunityCost) / buffAmount / duration);
 }
 
 
@@ -2159,12 +2730,12 @@ int monsterItemMeatValue(monster mob, float bonusItemDrop) {
 		float dropRate = (data.rate * (1 + bonusItemDrop/100)) / 100;
 		if (dropRate > 1.0) dropRate = 1.0;
 		if (data.type == "0") dropRate = (0.1 * (1 + bonusItemDrop/100)) / 100; // no info available, set to 0.1% by default
-		int mallPrice = mall_price(data.drop);
+		int mallPrice = historical_price(data.drop);
 		if (autosell_price(data.drop) > 0 && mallPrice == autosell_price(data.drop) * 2) {
 			//print("unsellable item: " + data.drop);
 			mallPrice = autosell_price(data.drop);
 		}
-		totalMeatValue += mall_price(data.drop) * dropRate;
+		totalMeatValue += historical_price(data.drop) * dropRate;
 	}
 	return totalMeatValue;
 }
@@ -2373,8 +2944,11 @@ void locationDropDetails(location aLocation) {
 boolean haveOutfit(string outfitName) {
 	print("checking outfit name: " + outfitName, "orange");
 	boolean rval = false;
-	if (outfitName.starts_with("_"))
-		rval = get_property(kSavedOutfitKeyPrefix + outfitName) != "";
+	if (outfitName.starts_with("_")) {
+		string prop = get_property(kSavedOutfitKeyPrefix + outfitName);
+// 		rval = get_property(kSavedOutfitKeyPrefix + outfitName) != "";
+		rval = prop != "" && !prop.contains_text(",");
+	}
 	else
 		rval = have_outfit(outfitName);
 		
@@ -2447,8 +3021,12 @@ boolean restoreOutfit(boolean restoreFamiliar, string outfitName) {
 	item [int] outfitPieces;
 	int i;
 	if (outfitName.starts_with("_")) {
-		foreach idx, pieceString in outfitPiecesString.split_string(", ") {
+		foreach idx, pieceString in outfitPiecesString.split_string("\t") {
 			string [] pieces = pieceString.split_string(": ");
+			if (count(pieces) < 2) {
+				print("problem parsing: " + pieceString);
+				continue;
+			}
 			if (pieces[1] == "none") continue; // some slots will have no item equipped
 			if (pieces[0].starts_with("fam")) continue; // ignore saved familiar (fam will be done by restoreEquippedFamiliar)
 
@@ -2638,19 +3216,6 @@ int fortuneCookie() {
 	}
 	return -1;
 }
-
-
-boolean semirareKnown() {
-	return fortuneCookie() >= my_turncount();
-}
-
-
-int turnsUntilSemiRare() {
-	if (!semirareKnown())
-		return -1;
-	return fortuneCookie() - my_turncount();
-}
-
 
 
 // returns the largest familiar weight adjustment we could get by dressing in the right clothes
@@ -3637,6 +4202,12 @@ item [phylum] kRobortenderDrops() {
 		}
 	}
 
+	// default booze
+	rval[$phylum[beast]] = $item[bottle of gin];
+	rval[$phylum[construct]] = $item[bottle of gin];
+	rval[$phylum[dude]] = $item[bottle of gin];
+	rval[$phylum[undead]] = $item[bottle of gin];
+
 	return rval;
 }
 
@@ -3728,31 +4299,30 @@ int roboEconomicsForMonster(monster roboMo, boolean doPrint) {
 	item [phylum] drops = kRobortenderDrops();
 	item [phylum] weak = kRobortenderWeakBooze();
 	item [phylum] strong = kRobortenderStrongBooze;
-
 	phylum monPhy = monster_phylum(roboMo);
-	if (drops contains monPhy) {
-		item bestValueItem = drops[monPhy];
-		int bestValuePrice = historical_price(bestValueItem);
+	assert(drops contains monPhy, "unknown monster phylum: " + monPhy);
 
-		if (historical_price(weak[monPhy]) > bestValuePrice) {
-			bestValueItem = weak[monPhy];
-			bestValuePrice = historical_price(bestValueItem);
-		}
-		if (historical_price(strong[monPhy]) > bestValuePrice) {
-			bestValueItem = strong[monPhy];
-			bestValuePrice = historical_price(bestValueItem);
-		}
+	item bestValueItem = drops[monPhy];
+	int bestValuePrice = historical_price(bestValueItem);
 
-		bestValue = bestValuePrice * baseDropChance;
-
-		if (doPrint)
-			print(roboMo
-				+ " drops " + drops[monPhy] + "@" + historical_price(drops[monPhy])
-				+ ", weak: " + weak[monPhy] + "@" + historical_price(weak[monPhy])
-				+ ", strong: " + strong[monPhy] + "@" + historical_price(strong[monPhy])
-				+ " -- best value * robo drop chance: " + bestValue + " meat value per kill"
-				, "green");
+	if (historical_price(weak[monPhy]) > bestValuePrice) {
+		bestValueItem = weak[monPhy];
+		bestValuePrice = historical_price(bestValueItem);
 	}
+	if (historical_price(strong[monPhy]) > bestValuePrice) {
+		bestValueItem = strong[monPhy];
+		bestValuePrice = historical_price(bestValueItem);
+	}
+
+	bestValue = bestValuePrice * baseDropChance;
+
+	if (doPrint)
+		print(roboMo
+			+ " drops " + drops[monPhy] + "@" + historical_price(drops[monPhy])
+			+ ", weak: " + weak[monPhy] + "@" + historical_price(weak[monPhy])
+			+ ", strong: " + strong[monPhy] + "@" + historical_price(strong[monPhy])
+			+ " -- best value * robo drop chance: " + bestValue + " meat value per kill"
+			, "green");
 
 	return bestValue;
 }
@@ -3808,6 +4378,152 @@ void roboEconomics() {
 	printString += "</table>";
 
 	print_html(printString);
+}
+
+
+item nextLuckyToUse() {
+	int cost = 0;
+	item lowestCostItem;
+	int lowestCostItemCost = kMaxInt;
+
+	if (!get_property("_freePillKeeperUsed").to_boolean())
+		return $item[Eight Days a Week Pill Keeper];
+
+	int speakeasyCost = (3 * 6 * kTurnValue) + 500;
+	if (get_property("_speakeasyDrinksDrunk").to_int() < 3 && lowestCostItemCost > speakeasyCost) {
+		lowestCostItem = $item[Lucky Lindy];
+		lowestCostItemCost = speakeasyCost;
+	}
+
+	int pillkeeperCost = 3 * kTurnsPerSpleen * kTurnValue;
+	if (my_spleen_use() < spleen_limit() - 3 && lowestCostItemCost > pillkeeperCost) {
+		lowestCostItem = $item[Eight Days a Week Pill Keeper];
+		lowestCostItemCost = pillkeeperCost;
+	}
+
+	int cloverCost = historical_price($item[11-leaf clover]);
+	if (have_item($item[11-leaf clover]) && lowestCostItemCost > cloverCost) {
+		lowestCostItem = $item[11-leaf clover];
+		lowestCostItemCost = historical_price($item[11-leaf clover]);
+	}
+
+	return lowestCostItem;
+}
+
+
+int [location] luckyAdventuresByMeatGainMap() {
+	return int [location] {
+		$location[Camp Logging Camp] : historical_price($item[poutine]) + historical_price($item[balaclava baklava]) + historical_price($item[blatantly canadian]),
+		$location[The Poker Room] : 300, // 20 mox
+		$location[The Roulette Tables] : 320, // 20 mys
+		$location[The Copperhead Club] : historical_price($item[Flamin' Whatshisname]) * 3,
+		$location[The Haunted Ballroom] : 0, // 2xmainstat mox
+		$location[The Haunted Bathroom] : 0, // 2xmainstat mys
+		$location[The Haunted Billiards Room] : historical_price($item[cube of billiard chalk]),
+		$location[The Haunted Conservatory] : historical_price($item[pile of dusty animal bones]),
+		$location[The Haunted Gallery] : 0, // 2xmainstat mus
+		$location[The Haunted Kitchen] : historical_price($item[freezerburned ice cube]),
+		$location[The Haunted Library] : historical_price($item[black eyedrops]),
+		$location[The Haunted Pantry] : historical_price($item[tasty tart]) * 3,
+		$location[The Haunted Storage Room] : 1000, // 1 PVP-able item that you're wearing
+		$location[Outskirts of Camp Logging Camp] : historical_price($item[forest tears]) * 3,
+		$location[The Haunted Boiler Room] : historical_price($item[Bram's choker]),
+		$location[The Sleazy Back Alley] : historical_price($item[distilled fortified wine]) * 3,
+		$location[The Limerick Dungeon] : historical_price($item[cyclops eyedrops]),
+		$location[Itznotyerzitz Mine] : historical_price($item[asbestos ore]), // could be any ore, assume they're all the same price
+		$location[The Goatlet] : historical_price($item[can of spinach]),
+		$location[Lair of the Ninja Snowmen] : historical_price($item[bottle of antifreeze]),
+		$location[The Icy Peak] : historical_price($item[frozen Mob Penguin]),
+		$location[The Smut Orc Logging Camp] : 0, // 3xglue, 3xplank (all quest items)
+		$location[A-boo Peak] : historical_price($item[death blossom]), // +2 a-boo clues (quest items)
+		$location[Twin Peak] : 0, // 10 turns of Your Interest is Peaked
+		$location[Oil Peak] : historical_price($item[bubblin' crude]) * 3 + historical_price($item[unnatural gas]),
+		$location[A Mob of Zeppelin Protesters] : 0, // NC for Zep quest
+		$location[The Red Zeppelin] : historical_price($item[red foxglove]) + 0.01 * historical_price($item[Red Fox glove]),
+		$location[The Valley of Rof L'm Fao] : historical_price($item[ASCII shirt]) + historical_price($item[30669 scroll]) + historical_price($item[33398 scroll]) + historical_price($item[334]) * 2,
+		$location[The Outskirts of Cobb's Knob] : historical_price($item[Knob Goblin lunchbox]),
+		$location[Cobb's Knob Barracks] : historical_price($item[Knob Goblin elite helm]) + historical_price($item[Knob Goblin elite pants]) + historical_price($item[Knob Goblin elite polearm]),
+		$location[Cobb's Knob Kitchens] : historical_price($item[Knob Kitchen grab-bag]),
+		$location[Cobb's Knob Harem] : historical_price($item[scented massage oil]) * 3,
+		$location[Cobb's Knob Treasury] : historical_price($item[Knob Goblin visor ]) * 0.5 + 2 * 100 + 1000,
+		$location[The Knob Shaft] : historical_price($item[bubblewrap ore]) * 3, // or cardboard, or styrofoam
+		$location[Cobb's Knob Laboratory] : historical_price($item[bottle of Mystic Shell]),
+		$location[Cobb's Knob Menagerie\, Level 2] : historical_price($item[irradiated pet snacks]),
+		$location[The Spooky Gravy Burrow] : historical_price($item[spooky lipstick]),
+		$location[Post-Quest Bugbear Pens] : historical_price($item[bugbear beanie]) + historical_price($item[bugbear bungguard]),
+		$location[Tower Ruins] : historical_price($item[disembodied brain]), // 15 mys
+		$location[The "Fun" House] : historical_price($item[box]) * 3,
+		$location[Battlefield (No Uniform)] : historical_price($item[six-pack of New Cloaca-Cola]),
+		$location[Battlefield (Cloaca Uniform)] : historical_price($item[six-pack of New Cloaca-Cola]),
+		$location[Battlefield (Dyspepsi Uniform)] : historical_price($item[six-pack of New Cloaca-Cola]),
+		$location[The Unquiet Garves] : historical_price($item[poltergeist-in-the-jar-o]),
+		$location[The VERY Unquiet Garves] : historical_price($item[disembodied brain]) + historical_price($item[smart skull]),
+		$location[Guano Junction] : historical_price($item[Eau de Guaneau]),
+		$location[The Batrat and Ratbat Burrow] : historical_price($item[Dogsgotnonoz pills]),
+		$location[The Castle in the Clouds in the Sky (Basement)] : 0, // NAGAMAR quest items
+		$location[The Castle in the Clouds in the Sky (Ground Floor)] : historical_price($item[possibility potion]),
+		$location[The Castle in the Clouds in the Sky (Top Floor)] : historical_price($item[Mick's IcyVapoHotness Inhaler]),
+		$location[The Spectral Pickle Factory] : historical_price($item[spectral pickle]), // not normally available
+		$location[The Spooky Forest] : historical_price($item[bowl of lucky charms]) + historical_price($item[leprechaun hatchling]) * 0.5,
+		$location[Whitey's Grove] : historical_price($item[bag of lard]),
+		$location[The Black Forest] : historical_price($item[black picnic basket]),
+		$location[The Dark Elbow of the Woods] : historical_price($item[SPF 451 lip balm]),
+		$location[The Dark Heart of the Woods] : historical_price($item[SPF 451 lip balm]),
+		$location[The Dark Neck of the Woods] : historical_price($item[SPF 451 lip balm]),
+		$location[Pandamonium Slums] : historical_price($item[SPF 451 lip balm]),
+		$location[The Hidden Park] : historical_price($item[shrinking powder]),
+		$location[The Hidden Temple] : historical_price($item[stone wool]) * 3,
+		$location[8-Bit Realm] : historical_price($item[[2426]fire flower]),
+		$location[Thugnderdome] : historical_price($item[Gnomish toolbox]),
+		$location[South of the Border] : historical_price($item[donkey flipbook]),
+		$location[The Oasis] : 0, // 20 turns of Ultrahydrated
+		$location[Frat House] : historical_price($item[bottle of rhinoceros hormones]),
+		$location[Frat House In Disguise] : historical_price($item[roll of drink tickets]),
+		$location[Hippy Camp] : historical_price($item[teeny-tiny magic scroll]),
+		$location[Hippy Camp In Disguise] : historical_price($item[fruit basket]),
+		$location[The Obligatory Pirate's Cove] : historical_price($item[bottle of pirate juice]),
+		$location[A Maze of Sewer Tunnels] : 0, // clan trophy
+		$location[Burnbarrel Blvd.] : historical_price($item[jar of squeeze]) - 5 * 1000, // costs 5 hobo coins, which are untradeable
+		$location[Exposure Esplanade] : historical_price($item[bowl of fishysoisse]) - 5 * 1000, // costs 5 hobo coins, which are untradeable
+		$location[The Heap] : historical_price($item[concentrated garbage juice]) - 5 * 1000, // costs 5 hobo coins, which are untradeable
+		$location[The Ancient Hobo Burial Ground] : historical_price($item[deadly lampshade]) - 5 * 1000, // costs 5 hobo coins, which are untradeable
+		$location[The Purple Light District] : historical_price($item[lewd playing card]) - 5 * 1000, // costs 5 hobo coins, which are untradeable
+		$location[The Briny Deeps] : historical_price($item[beefy fish meat]) * 2 + historical_price($item[glistening fish meat]) * 2 + historical_price($item[slick fish meat]) * 2,
+		$location[The Brinier Deepers] : 50 * 1000, // 50 adv of Fishy
+		$location[An Octopus's Garden] : historical_price($item[giant pearl]),
+		$location[The Wreck of the Edgar Fitzsimmons] : historical_price($item[long-forgotten necklace]),
+		$location[The Dive Bar] : historical_price($item[shavin' razor]),
+		$location[Madness Reef] : 20 * 500, // 20 adv of +100 item (underwater only)
+		$location[The Mer-Kin Outpost] : historical_price($item[sand dollar]) * 17.5,
+		$location[The Primordial Soup] : historical_price($item[memory of some delicious amino acids]) * 3.5 + historical_price($item[memory of a CA base pair]) * 0.5 + historical_price($item[memory of a CT base pair]) * 0.5 + historical_price($item[memory of a GT base pair]) * 0.5 + historical_price($item[memory of an AG base pair]) * 0.5 + historical_price($item[memory of an AT base pair]) * 0.5 + historical_price($item[memory of a CA base pair]) * 0.5,
+		$location[Ye Olde Medievale Villagee] : historical_price($item[straw]) + historical_price($item[leather]) + historical_price($item[clay]),
+		$location[Vanya's Castle Chapel] : historical_price($item[pixel stopwatch]),
+		$location[Art Class] : historical_price($item[twisted piece of wire]) + historical_price($item[angry inch]) + historical_price($item[eraser nubbin]) + historical_price($item[lump of clay]),
+		$location[Chemistry Class] : historical_price($item[chlorine crystal]) + historical_price($item[ph balancer]) + historical_price($item[mysterious chemical residue]) + historical_price($item[nugget of sodium]),
+		$location[Shop Class] : historical_price($item[jigsaw blade]) + historical_price($item[wood screw]) + historical_price($item[balsa plank]) + historical_price($item[blob of wood glue]),
+		$location[The Hallowed Halls] : historical_price($item[folder (KOLHS)]),
+	};
+}
+
+
+location [] sortedLuckyAdventuresByMeatGain(boolean shouldPrint) {
+	int [location] luckyAdventuresByMeatGainMap = luckyAdventuresByMeatGainMap();
+	location [int] sortableLucky;
+	int idx;
+	foreach aloc, meatGain in luckyAdventuresByMeatGainMap {
+		sortableLucky[idx++] = aloc;
+	}
+	sort sortableLucky by luckyAdventuresByMeatGainMap[value];
+
+	if (shouldPrint)
+		foreach ind, aloc in sortableLucky
+			print(aloc + ": " + luckyAdventuresByMeatGainMap[aloc]);
+
+	return sortableLucky;
+}
+
+location [] sortedLuckyAdventuresByMeatGain() {
+	return sortedLuckyAdventuresByMeatGain(true);
 }
 
 
@@ -3940,6 +4656,17 @@ void fuelAsdonMartin(int moreFuel) {
 }
 
 
+int costOfAsdonMartinFuel(int fuelLevel) {
+	item bestFuel = bestAsdonFuel();
+	int amtFuelToAcquire = ceil(fuelLevel.to_float() / nutrition(bestFuel).to_float());
+	return historical_price(bestFuel) * amtFuelToAcquire;
+}
+
+int costOfAsdonMartinBuff() {
+	return costOfAsdonMartinFuel(37);
+}
+
+
 // ensure the Asdon Martin is fueled up to fuelLevel
 void ensureAsdonMartinFuel(int fuelLevel) {
 	assert(isAsdonWorkshed(), "ensureAsdonMartinFuel: no Asdon Martin in your workshed!");
@@ -3998,12 +4725,35 @@ float micrometerorite_percent() {
 
 
 
+// returns the location to find the given latte lovers member's mug ingredient
+location latteGrindLocationForIngredient(string ingredient) {
+	return kLatteLocations[ingredient];
+}
+
+
+// returns the latte lovers member's mug ingredient we might find at the given location (note that it might already be unlocked!)
+string latteIngredientForLocation(location aLocation) {
+	foreach ingredient, latteLocation in kLatteLocations {
+		if (latteLocation == aLocation)
+			return ingredient;
+	}
+	return "";
+}
+
+
+
 boolean isLatteIngredientUnlocked(string ingredient) {
 	return get_property("latteUnlocks").contains_text(ingredient);
 }
 
 
-// ease-of-use helper function for refilling latte automatically
+// returns true if we have the latte lovers member's mug ingredient that is unlocked by adventuring at aLocation
+boolean isLatteLocationUnlocked(location aLocation) {
+	return isLatteIngredientUnlocked(latteIngredientForLocation(aLocation));
+}
+
+
+// ease-of-use helper function for refilling latte lovers member's mug automatically
 void refillLatteIfRequired(string ing1, string ing2, string ing3) {
 	int latteRefillsAvailable = 3 - to_int(get_property("_latteRefillsUsed"));
 	boolean latteBanishAvailable = !to_boolean(get_property("_latteBanishUsed"));
@@ -4012,7 +4762,7 @@ void refillLatteIfRequired(string ing1, string ing2, string ing3) {
 	}
 }
 
-// refills the latte mug if required with default ingredients (+item, +meat, + )
+// refills the latte lovers member's mug if required with default ingredients (+item, +meat, + )
 void refillLatteIfRequired() {
 	int latteRefillsAvailable = 3 - to_int(get_property("_latteRefillsUsed"));
 	boolean latteBanishAvailable = !to_boolean(get_property("_latteBanishUsed"));
@@ -4026,6 +4776,21 @@ void refillLatteIfRequired() {
 
 
 
+// returns the number of combats at the Guzzlr quest location that will complete the quest
+int guzzlrQuestTurns(boolean withShoes) {
+    int guzzlrQuestProgressLeft = 100 - get_property("guzzlrDeliveryProgress").to_int();
+    float guzzlrQuestIncrement = max(3, 10 - get_property("_guzzlrDeliveries").to_int());
+    float guzzlrQuestShoedIncrement = floor(1.5 * guzzlrQuestIncrement);
+    int guzzlrQuestFightsLeft = ceil(guzzlrQuestProgressLeft / guzzlrQuestIncrement);
+    int guzzlrQuestShoedFightsLeft = ceil(guzzlrQuestProgressLeft / guzzlrQuestShoedIncrement);
+
+	if (withShoes)
+		return guzzlrQuestShoedFightsLeft;
+	else
+		return guzzlrQuestFightsLeft;
+}
+
+
 boolean onGuzzlrQuest() {
 	if (get_property("questGuzzlr") == "unstarted")
 		return false;
@@ -4034,12 +4799,10 @@ boolean onGuzzlrQuest() {
 
 
 void printGuzzlrQuest() {
-	if (get_property("questGuzzlr") == "unstarted") {
-		print("No Guzzlr quest started!", "red");
-		return;
-	}
-
-	print(get_property("guzzlrQuestTier") + " tier quest: go to " + get_property("guzzlrQuestLocation") + " and give a " + get_property("guzzlrQuestBooze"), "green");
+	if (get_property("questGuzzlr") == "unstarted")
+		print("No Guzzlr quest started!", "green");
+	else
+		print(get_property("guzzlrQuestTier") + " tier quest: go to " + get_property("guzzlrQuestLocation") + " and give a " + get_property("guzzlrQuestBooze"), "green");
 	print("abandoned a quest: " + get_property("_guzzlrQuestAbandoned") + ", today's deliveries plat: " + get_property("_guzzlrPlatinumDeliveries") + ", gold: " + get_property("_guzzlrGoldDeliveries") + ", total deliveries today: " + get_property("_guzzlrDeliveries"), "green");
 }
 
@@ -4438,7 +5201,7 @@ string timespinnerFight(monster toFight) {
 	string testString = "<option value=\"" + to_int(toFight) + "\">" + toFight + "</option>";
 	if (!aPage.contains_text(testString)) {
 		run_choice(2); // maybe later
-		abort("can't travel back to a monster we haven't already fought at least once this ascension!");
+		return "";
 	}
 
 	return visit_url("/choice.php?pwd&whichchoice=1196&option=1&monid=" + to_int(toFight), true, false); // select the monster to fight
@@ -4449,46 +5212,45 @@ string timespinnerFight(monster toFight) {
 boolean canConsultColdMedicineCabinet() {
 	int consultsRemaining = 5 - get_property("_coldMedicineConsults").to_int();
 	int nextColdMedicineConsult = get_property("_nextColdMedicineConsult").to_int();
-	return consultsRemaining > 0 && nextColdMedicineConsult <= total_turns_played();
+	return isColdMedicineWorkshed() && consultsRemaining > 0 && nextColdMedicineConsult <= total_turns_played();
 }
 
 
-
-// TODO fix this: static map doesn't work, need to build dynamically based on sniffing the items from the HTML
-void coldMedicineCabinet() {
-	item [string] kDocNameToItemMap = {
-		"Dr. Heelgood, Orthopedist" : $item[ice crown],
-		"Dr. Tatestgood, Nutritionist" : $item[frozen tofu pop],
-		"Dr. Freeze, Prohibition Doc" : $item[Doc's Smartifying Wine],
-		"Dr. Peelgood, Dermatologist" : $item[anti-odor cream],
-		"Dr. Iveway, Internist" : $item[Homebodyl&trade;],
-	};
-
-	int consultsRemaining = 5 - get_property("_coldMedicineConsults").to_int();
-	int nextColdMedicineConsult = get_property("_nextColdMedicineConsult").to_int();
-	if (!canConsultColdMedicineCabinet())
-		abort("can't consult coldMedicineCabinet, consultsRemaining: " + consultsRemaining + " nextColdMedicineConsult=" + nextColdMedicineConsult + " (current turncount: " + total_turns_played() + ")");
-
+// returns a ChoiceRecord for each CMC choice option with the item (not the Doctor Name) as the choiceString
+ChoiceRecord [] coldMedicineCabinet(boolean shouldPrint) {
+	ChoiceRecord [int] rval;
 	string cabinetPage = visit_url("/campground.php?action=workshed", false, false); // use post?, encoded?
-	string [] choices = available_choice_options();
-	item [int] gettableItems;
-	int [item] itemToChoiceNumberMap; // maps items to choice number
-	int idx;
-	foreach num, choice_text in choices {
-		item theItem = kDocNameToItemMap[choice_text];
-		if (theItem != $item[none]) {
-			print(num + ": " + theItem + " @ " + historical_price(theItem));
-			itemToChoiceNumberMap[theItem] = num;
-			gettableItems[idx++] = theItem;
-		} //else if (num < 6)
-// 			abort("new doctor name! " + choice_text);
+
+	string [int] itemStrings = xpath(cabinetPage, "//form//table//tr//td//table//tr//td//b/text()");
+	foreach idx, itemString in itemStrings {
+		ChoiceRecord cr = new ChoiceRecord(++idx, itemString);
+		rval[idx] = cr;
+		if (shouldPrint) print(idx + ": " + itemString);
 	}
 
-	sort gettableItems by -historical_price(value);
-	item bestTarget = gettableItems[0];
-	print("coldMedicineCabinet getting: " + bestTarget + " worth " + historical_price(bestTarget), "blue");
-// 	run_choice(itemToChoiceNumberMap[bestTarget]);
-	run_choice(4);
+	return rval;
+}
+
+ChoiceRecord [] coldMedicineCabinet() {
+	return coldMedicineCabinet(true);
+}
+
+
+// TODO fix this: static map doesn't work, need to build dynamically based on sniffing the items from the HTML
+void getColdMedicineCabinetMedication() {
+	int consultsRemaining = 5 - get_property("_coldMedicineConsults").to_int();
+	int nextColdMedicineConsult = get_property("_nextColdMedicineConsult").to_int();
+	print("coldMedicineCabinet consultsRemaining: " + consultsRemaining + " nextColdMedicineConsult=" + nextColdMedicineConsult + " (current turncount: " + total_turns_played() + ")", "green");
+	if (!canConsultColdMedicineCabinet())
+		abort("can't consult coldMedicineCabinet");
+
+	ChoiceRecord [] cmcItems = coldMedicineCabinet(false);
+	sort cmcItems by -historical_price(to_item(value.choiceString));
+	foreach idx, cr in cmcItems {
+		print("coldMedicineCabinet getting choice " + cr.choiceNum + ": " + cr.choiceString + " worth " + historical_price(cr.choiceString.to_item()), "blue");
+		run_choice(cr.choiceNum);
+		break;
+	}
 }
 
 
@@ -4502,6 +5264,159 @@ int cosmicBowlingBallDuration() {
 // returns the number of turns until the cosmic bowling ball returns or -1 if it's in our inventory
 int cosmicBowlingBallReturnCombats() {
 	return get_property("cosmicBowlingBallReturnCombats").to_int();
+}
+
+
+
+// returns the monsters we've fought with the combat lover's locket
+boolean [monster] cllMonstersFought(boolean shouldPrint) {
+	boolean [monster] rval;
+	string monstersFoughtString = get_property("_locketMonstersFought");
+	string [] monstersFought = monstersFoughtString.split_string(",");
+	if (shouldPrint) print("monsters fought with the combat lover's locket:");
+	foreach idx, monString in monstersFought {
+		monster aMonster = monString.to_monster();
+		if (aMonster == $monster[none]) break; // most likely the empty string, i.e. no reminiscences
+		rval[aMonster] = true;
+		if (shouldPrint) print(aMonster);
+	}
+	return rval;
+}
+
+boolean [monster] cllMonstersFought() {
+	return cllMonstersFought(true);
+}
+
+int cllNumMonstersFought() {
+	return count(cllMonstersFought(false));
+}
+
+
+void printMonsterArray(boolean [monster] someMon) {
+	if (count(someMon) > 0)
+		foreach aMonster in someMon {
+			print("[" + aMonster.to_int() + "]" + aMonster);
+		}
+	else
+		print("no monsters");
+	print("total monsters: " + count(someMon));
+}
+
+
+boolean [monster] cllReminiscence() {
+	boolean [monster] monsterList;
+
+	if (!property_exists("_smm.CLLMonsters")) {
+		// NOT CACHED
+		string pageString = visit_url("/inventory.php?reminisce=1", false, false);
+		matcher monsterMatcher = create_matcher("<option value=\"([0-9]+)\" >(.*?)</option>", pageString);
+		while (find(monsterMatcher)) {
+			monster aMonster = group(monsterMatcher, 2).to_monster();
+			int monID = group(monsterMatcher, 1).to_int();
+	// 		print("[" + monID + "]" + aMonster);
+			if (aMonster.isCopyable())
+				monsterList[aMonster] = true;
+		}
+
+		// STORE IN CACHE
+		foreach aMonster, ignore in monsterList {
+			string startChar = char_at(aMonster, 0);
+			string storedProperty = get_property("_smm.CLLMonstersStartingWith" + startChar);
+			string storedString = aMonster.to_int() + "\t";
+			if (!storedProperty.contains_text("," + storedString) && !storedProperty.starts_with(storedString)) {
+				storedProperty += storedString;
+				set_property("_smm.CLLMonstersStartingWith" + startChar, storedProperty);
+			}
+		}
+		set_property("_smm.CLLMonsters", true);
+
+	} else {
+		// CACHE
+		foreach aPropertyName, ignore in get_all_properties("_smm.CLLMonstersStartingWith", false) {
+			string [int] monsterIds = get_property(aPropertyName).split_string("\t");
+			foreach idx, anID in monsterIds {
+				monsterList[to_monster(anID)] = true;
+			}
+		}
+	}
+
+	return monsterList;
+}
+
+void cllReminiscenceClearCache() {
+	remove_property("_smm.CLLMonsters");
+}
+
+
+boolean [monster] cllReminiscence(location atLocation) {
+	boolean [monster] rval;
+	boolean [monster] cllReminiscence = cllReminiscence();
+
+	foreach aMonster, rate in appearance_rates(atLocation) {
+		if (aMonster != $monster[none] && rate > 0.0 && (cllReminiscence contains aMonster))
+			rval[aMonster] = true;
+	}
+	return rval;
+}
+
+
+void printCLLReminiscence() {
+	print("all combat locket reminiscences:");
+	printMonsterArray(cllReminiscence());
+}
+
+void printCLLReminiscence(location atLocation) {
+	print("combat locket reminiscences in [" + atLocation.to_int() + "]" + atLocation + ":");
+	printMonsterArray(cllReminiscence(atLocation));
+}
+
+
+boolean [monster] cllNoReminiscence(location atLocation) {
+	boolean [monster] rval;
+
+	// these locations don't have any knowable reminiscences -- can't detect these any other way right now
+	if (atLocation == $location[Dreadsylvanian Woods] ||atLocation == $location[Dreadsylvanian Village] ||atLocation == $location[Dreadsylvanian Castle])
+		return rval;
+
+	boolean [monster] cllReminiscence = cllReminiscence();
+	foreach aMonster, rate in appearance_rates(atLocation) {
+		if (aMonster != $monster[none] && rate > 0.0 && !aMonster.boss
+			&& !(cllReminiscence contains aMonster))
+			rval[aMonster] = true;
+	}
+	return rval;
+}
+
+void printCLLNoReminiscence(location atLocation) {
+	print("missing combat locket reminiscences in [" + atLocation.to_int() + "]" + atLocation + ":");
+	printMonsterArray(cllNoReminiscence(atLocation));
+}
+
+
+// returns true iff the combat lover's locket can reminisce about aMonster
+boolean cllHasReminiscence(monster aMonster) {
+	return cllReminiscence() contains aMonster;
+}
+
+
+int combatLoversLocketenomics() {
+	int rval;
+
+	boolean [monster] allMons = cllReminiscence();
+	monster [int] sortableMons;
+	int idx;
+	foreach amon in allMons {
+		sortableMons[idx++] = amon;
+	}
+	sort sortableMons by value.monsterCurrentTotalMeatValue();
+
+	print("value of each combat lover's locket reminiscence at current +item/+meat: " + item_drop_modifier() + "%/" + meat_drop_modifier() + "%");
+	foreach ind, amon in sortableMons {
+		int monMeat = monsterCurrentTotalMeatValue(amon);
+		rval += monMeat;
+		print(amon + ": " + monMeat);
+	}
+	return rval;
 }
 
 
@@ -4580,7 +5495,7 @@ int banishesInEffect() {
 }
 
 
-// true if using the given banisher at the given location (or anywhere if aLocation is None)
+// true if using the given banisher at the given location (or anywhere if aLocation is none)
 boolean using_banish(skill aBanisher, location aLocation) {
 	BanishRecord [] banishedMonsters = parseBanishedMonsters();
 	for i from 0 to count(banishedMonsters) {
@@ -4590,7 +5505,6 @@ boolean using_banish(skill aBanisher, location aLocation) {
 	}
 	return false;
 }
-
 
 // is the banisher being used anywhere?
 boolean using_banish(skill aBanisher) {
@@ -4684,7 +5598,7 @@ PrioritySkillRecord [int] banishSkillData(boolean availableWhenInUse, location a
 
 	// Show Your Boring Familiar Pictures
 	tempBSR = new PrioritySkillRecord($skill[Show Your Boring Familiar Pictures], $item[familiar scrapbook]);
-	tempBSR.priority = basePriority + 0.1;
+	tempBSR.priority = basePriority + 0.2; // we want these to be spent after the others
 	tempBSR.usesAvailable = to_int(get_property("scrapbookCharges")) / 100;
 	tempBSR.isAvailableNow = ((equipped_amount($item[familiar scrapbook]) > 0 && have_skill($skill[Show Your Boring Familiar Pictures]))
 		 || (!isInCombat && canEquipWithExistingAutomatedDressup($item[familiar scrapbook])))
@@ -4775,38 +5689,36 @@ int banishesAvailable(int maxPerTurnCost) {
 // start by looking at priorities as ints, and select the set of banishes with the same lowest priority, and where usesAvailable > 0 and isAvailableNow is true
 // within the set of banishes with the same integer priority, select the banishes with the highest usesAvailable
 // within the set of banishes with the same integer priority and the same number of usesAvailable, select the banish with the highest fractional priority
-SkillRecord banishToUse(PrioritySkillRecord [] skillData, location aLocation, int maxPerTurnCost, SkillRecord [] excludedBanishes) {
+PrioritySkillRecord banishToUse(PrioritySkillRecord [] skillData, location aLocation, int maxPerTurnCost, PrioritySkillRecord [] excludedBanishes) {
 	boolean isInCombat = inCombat();
 	if (!isInCombat) refillLatteIfRequired();
 	if (maxPerTurnCost > 0 && !isInCombat && isAsdonWorkshed())
 		ensureAsdonMartinFuel(50);
 
-	PrioritySkillRecord psr = skillToUse(skillData, aLocation, maxPerTurnCost, excludedBanishes);
-
-	return new SkillRecord(psr.theSkill, psr.theItem);
+	return skillToUse(skillData, aLocation, maxPerTurnCost, excludedBanishes);
 }
 
 // banish selection:
 // start by looking at priorities as ints, and select the set of banishes with the same lowest priority, and where usesAvailable > 0 and isAvailableNow is true
 // within the set of banishes with the same integer priority, select the banishes with the highest usesAvailable
 // within the set of banishes with the same integer priority and the same number of usesAvailable, select the banish with the highest fractional priority
-SkillRecord banishToUse(location aLocation, int maxPerTurnCost, SkillRecord [] excludedBanishes) {
+PrioritySkillRecord banishToUse(location aLocation, int maxPerTurnCost, PrioritySkillRecord [] excludedBanishes) {
 	PrioritySkillRecord [] skillData = banishSkillData(false, aLocation, maxPerTurnCost);
 	return banishToUse(skillData, aLocation, maxPerTurnCost, excludedBanishes);
 }
 
-SkillRecord banishToUse(PrioritySkillRecord [] skillData, location aLocation, int maxPerTurnCost) {
-	SkillRecord [] excludedBanishes;
+PrioritySkillRecord banishToUse(PrioritySkillRecord [] skillData, location aLocation, int maxPerTurnCost) {
+	PrioritySkillRecord [] excludedBanishes;
 	return banishToUse(skillData, aLocation, maxPerTurnCost, excludedBanishes);
 }
 
-SkillRecord banishToUse(location aLocation, int maxPerTurnCost) {
+PrioritySkillRecord banishToUse(location aLocation, int maxPerTurnCost) {
 	PrioritySkillRecord [] skillData = banishSkillData(false, aLocation, maxPerTurnCost);
-	SkillRecord [] excludedBanishes;
+	PrioritySkillRecord [] excludedBanishes;
 	return banishToUse(skillData, aLocation, maxPerTurnCost, excludedBanishes);
 }
 
-SkillRecord banishToUse(location aLocation) {
+PrioritySkillRecord banishToUse(location aLocation) {
 	return banishToUse(aLocation, 0);
 }
 
@@ -4844,7 +5756,7 @@ PrioritySkillRecord [int] replaceMonsterSkillData() {
 }
 
 PrioritySkillRecord chooseReplaceMonsterSkill() {
-	SkillRecord [int] excludedSkills;
+	PrioritySkillRecord [int] excludedSkills;
 	return skillToUse(replaceMonsterSkillData(), $location[none], kMaxInt, excludedSkills);
 }
 
@@ -4918,7 +5830,7 @@ int instaKillsAvailable() {
 
 
 PrioritySkillRecord chooseInstaKillSkill() {
-	SkillRecord [int] excludedSkills;
+	PrioritySkillRecord [int] excludedSkills;
 
 	if (!inCombat() && isAsdonWorkshed())
 		ensureAsdonMartinFuel(100);
@@ -4951,7 +5863,7 @@ PrioritySkillRecord [int] yellowRaySkillData() {
 	tempPSR.isAvailableNow = isAsdonWorkshed() && get_fuel() >= 100;
 	psrArray[i++] = tempPSR;
 
-	// Disintegrate
+	// Disintegrate -- yellow rocket is better
 // 	tempPSR = new PrioritySkillRecord($skill[Disintegrate]);
 // 	tempPSR.theItem = $item[none];
 // 	tempPSR.meatCost = kTurnValue;
@@ -5005,6 +5917,7 @@ PrioritySkillRecord [int] yellowRaySkillData() {
 
 
 // get mana and other resources to allow YR
+// TODO detect which YR we're using and only prep for that
 void prepForYellowRay() {
 	restore_mp(150);
 	if (isAsdonWorkshed() && !to_boolean(get_property("_missileLauncherUsed")))
@@ -5012,14 +5925,14 @@ void prepForYellowRay() {
 }
 
 
-PrioritySkillRecord chooseYellowRaySkill(SkillRecord [] excludedSkills) {
+PrioritySkillRecord chooseYellowRaySkill(PrioritySkillRecord [] excludedSkills) {
 	if (!inCombat())
 		prepForYellowRay();
 	return skillToUse(yellowRaySkillData(), $location[none], kMaxInt, excludedSkills);
 }
 
 PrioritySkillRecord chooseYellowRaySkill() {
-	SkillRecord [] excludedSkills;
+	PrioritySkillRecord [] excludedSkills;
 	return chooseYellowRaySkill(excludedSkills);
 }
 
@@ -5032,7 +5945,7 @@ boolean canYellowRay() {
 // returns true if we have any yellow ray skills available that don't give the Everything Looks Yellow debuff
 // can be used to ensure all free yellow ray skills are used
 boolean canYellowRayWithoutSeeingYellow() {
-	SkillRecord [] excludedSkills = {new SkillRecord($skill[Disintegrate], $item[none])};
+	PrioritySkillRecord [] excludedSkills = {new PrioritySkillRecord($skill[Disintegrate], $item[none])};
 	PrioritySkillRecord chosenYellowRaySkill = chooseYellowRaySkill(excludedSkills);
 	return chosenYellowRaySkill.theSkill != $skill[none] && chosenYellowRaySkill.usesAvailable > 0 && chosenYellowRaySkill.isAvailableNow;
 }
@@ -5045,20 +5958,47 @@ boolean canDisintegrate() {
 
 
 // -------------------------------------
-// POST ADVENTURE
+// POST ADVENTURE PRE ADVENTURE post-adventure pre-adventure
 // -------------------------------------
+
+
+void preAdventureChecks(int checkTurns) {
+	print("preAdventureChecks: " + checkTurns + " turns in advance", "green");
+
+	if (my_adventures() == 0) abort("Out of adventures!");
+
+	check_counters(checkTurns, kAbortOnCounter);
+
+	burnExtraMP();
+// 	dressup(); // would be nice, but no way to get it
+
+	if (inRonin() && get_property("cursedMagnifyingGlassCount").to_int() >= 13 && !get_property("_smm.VoidMonsterWarningDone").to_boolean() && equipped_amount($item[cursed magnifying glass]) >= 1) {
+		if (!user_confirm("You're about to adventure with the cursed magnifying glass when a void monster is expected next... Continue?", 60000, true))
+			abort("user aborted");
+		set_property("_smm.VoidMonsterWarningDone", true);
+	} else if (get_property("cursedMagnifyingGlassCount").to_int() == 0)
+		set_property("_smm.VoidMonsterWarningDone", false);
+
+	if (count(get_goals()) > 0)
+		set_property(kHadGoalsKey, "true");
+	else
+		set_property(kHadGoalsKey, "false");
+}
+
+void preAdventureChecks() {
+	preAdventureChecks(0);
+}
+
 
 
 // TODO: play with the boombox???? can only do 11/day
 // TODO: LOVe potion #0 / tainted LOVe potion
-// TODO: red rocket/blue rocket
 // returns true iff there were goals at the start of the adventure and all goals were satisfied in the last adventure
 boolean postAdventure() {
-	print("**RUNNING post-adventure script**", "blue");
+	print("postAdventure", "green");
 
 	assert(!inCombat(), "postAdventure: shouldn't be in combat");
 	assert(!handling_choice(), "postAdventure: shouldn't be in a choice");
-	print("debug: raw mood: " + getMoodRaw());
 
 	// setSmutOrcPervertProgress  -- MOVED TO advURLWithWanderingMonsterRedirect
 // 	if (my_location() == $location[The Smut Orc Logging Camp]) {
@@ -5084,6 +6024,9 @@ boolean postAdventure() {
 		// having none blocks the lucky gold ring from dropping them
 		put_closet(item_amount($item[sand dollar]), $item[sand dollar]);
 		put_closet(item_amount($item[hobo nickel]), $item[hobo nickel]);
+
+		// can't get these if we have any in our inventory
+		put_closet(item_amount($item[Elf Farm Raffle ticket]), $item[Elf Farm Raffle ticket]);
 
 		// having none allows them to drop from the Boxing Daydream
 		put_closet(item_amount($item[bauxite beret]), $item[bauxite beret]);
@@ -5114,11 +6057,16 @@ boolean postAdventure() {
 		}
 
 		// COLD MEDICINE cabinet
-		if (canConsultColdMedicineCabinet())
-			coldMedicineCabinet();
-	} else {
+		if (isColdMedicineWorkshed()) {
+			if (canConsultColdMedicineCabinet())
+				getColdMedicineCabinetMedication();
+			else if (!get_property("_workshedItemUsed").to_boolean() && get_property("_coldMedicineConsults").to_int() >= 5)
+				print("we can switch workshed items now, and we're done with the cold medicine cabinet for today");
+		}
+
+	} else { // IN RONIN
 		// FIREWORKS -- ensure we have one rocket of each colour at all times
-		if (my_meat() > 2000) {
+		if (my_meat() > 2500) {
 			if (item_amount($item[red rocket]) == 0 && have_effect($effect[Everything Looks Red]) == 0)
 				fullAcquire($item[red rocket]);
 			if (item_amount($item[blue rocket]) == 0 && have_effect($effect[Everything Looks Blue]) == 0)
@@ -5126,16 +6074,19 @@ boolean postAdventure() {
 			if (item_amount($item[yellow rocket]) == 0 && have_effect($effect[Everything Looks Yellow]) == 0)
 				fullAcquire($item[yellow rocket]);
 		}
-
-		// COLD MEDICINE cabinet
-		if (canConsultColdMedicineCabinet())
-			print("cold medicine cabinet is ready!", "red");
 	}
 
 	checkForLastSausageGoblin();
 
-	if (my_adventures() == 0)
-		print("ZERO ADVENTURES! Fight an XO monster?!!!!?", "red");
+	// NOTICES TODO could add one for familiar minigame completion?
+	if (my_adventures() == 0 && !inRonin())
+		print("ZERO adventures! Fight an XO monster?", "red");
+	if (canConsultColdMedicineCabinet())
+		print("cold medicine cabinet is ready", "red");
+	if (!inRonin() && isColdMedicineWorkshed() && get_property("_coldMedicineConsults").to_int() >= 5 && !get_property("_workshedItemUsed").to_boolean())
+		print("cold medicine cabinet is EMPTY!", "red");
+	if (get_property("cursedMagnifyingGlassCount").to_int() >= 13 && get_property("_voidFreeFights").to_int() <= 5)
+		print("cursed magnifying glass is ready", "red");
 
 	// GOALS and return value
 	if (to_boolean(get_property(kHadGoalsKey)) && count(get_goals()) == 0) {
@@ -5148,37 +6099,38 @@ boolean postAdventure() {
 
 
 
-string toString(AdventureRecord advRecord) {
-	if (advRecord.locationToUse != $location[none])
-		return advRecord.locationToUse.to_string();
-	else if (advRecord.itemToUse != $item[none])
-		return advRecord.itemToUse.to_string();
-	else
-		return advRecord.skillToUse.to_string();
+// Adventure using visit_url instead of adventure() -- but also attempts to do all the pre-stuff that adventure() does.
+// Post-stuff will have to be done elsewhere... Useful when you want the pre-automation of adventure() without the turn
+// automation or the post-automation that can kill scripts (such as when you get Beaten Up during an adventure)
+// checkTurns is the number of turns to check ahead for counter expiry, default is 0, i.e. next turn
+// Returns the text of the page returned by visit_url
+// Typically, this will return mid-adventure, so you will need to run_turn() or whatever after this.
+string advURL(string aURL, int checkTurns, boolean isPost, boolean urlEncoded) {
+	preAdventureChecks(checkTurns);
+	logEquipment(true);
+	string rval = visit_url(aURL, isPost, urlEncoded);
+	return rval;
 }
 
-
-// adventures at advRecord (a location, item or skill) including all pre-adventure checks
-string getToAdventure(AdventureRecord advRecord) {
-	if (advRecord.locationToUse != $location[none])
-		return advURL(advRecord.locationToUse);
-	else if (advRecord.itemToUse != $item[none]) {
-		preAdventureChecks();
-		return use(1, advRecord.itemToUse);
-	} else {
-		preAdventureChecks();
-		return use_skill(advRecord.skillToUse);
-	}
+string advURL(string aLocation, boolean isPost, boolean urlEncoded) {
+	return advURL(aLocation, 0, isPost, urlEncoded);
 }
 
+string advURL(string aLocation) {
+	return advURL(aLocation, 0, false, false);
+}
 
+string advURL(location aLocation, int checkTurns, boolean isPost, boolean urlEncoded) {
+	notesForLocation(aLocation);
+	return advURL(to_url(aLocation), checkTurns, isPost, urlEncoded);
+}
 
-// adventures at advRecord (a location, item or skill) including all pre- and post-adventure stuff
-boolean anyAdventure(AdventureRecord advRecord) {
-	string result = getToAdventure(advRecord);
-	result += run_turn();
-	postAdventure();
-	return true;
+string advURL(location aLocation, int checkTurns) {
+	return advURL(to_url(aLocation), checkTurns, false, false);
+}
+
+string advURL(location aLocation) {
+	return advURL(aLocation, 0);
 }
 
 
@@ -5204,7 +6156,7 @@ int daycareRecruit() {
 
 
 void daycareScavenge() {
-	preAdventureChecks(3);
+	preAdventureChecks(3); // spending up to 3 turns, so do check manually
 	advURL("/place.php?whichplace=town_wrong&action=townwrong_boxingdaycare", 1, true, false);
 	run_choice(3);
 	run_choice(2);
