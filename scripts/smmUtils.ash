@@ -631,6 +631,7 @@ int availableFreeCraftTurns() {
 
 // uses historical_price if it can, otherwise tries mall_price, if both of those are zero,
 // checks if npc_price is non-zero and cheaper than at the mall, uses that if so
+// returns 0 if the items is not purchasable
 int cheapest_price(item anItem) {
 	int buyPrice = historical_price(anItem);
 	if (buyPrice == 0)
@@ -745,6 +746,11 @@ int maxAccordionSongs()  {
 	return maxSongs + additionalSongs;
 }
 
+
+
+int my_familiar_weight() {
+	return familiar_weight(my_familiar());
+}
 
 
 item [familiar] my_familiars() {
@@ -901,24 +907,29 @@ ItemDropRecord [] normalized_item_drops_array(monster mob) {
 }
 
 
-// returns pickpocket-able items dropped by aMonster
+// returns pickpocket-able items dropped by aMonster, with pp-only items in array slot 0
 ItemDropRecord [int] ppItemDropsArray(monster aMonster) {
 	ItemDropRecord [int] itemDropRecordArray;
 	ItemDropRecord tempIDR;
-	int counter = 0;
+	int counter = 1; // use 0 for pp-only item
+	boolean ppOnlyItemFound = false;
 
 	foreach idx, monsterDropsArray in item_drops_array(aMonster) {
-		if ((monsterDropsArray.rate > 0 || monsterDropsArray.type == "0") && (monsterDropsArray.type != "n" && monsterDropsArray.type != "b")) {
-			tempIDR = new ItemDropRecord();
-			tempIDR.drop = monsterDropsArray.drop;
-			tempIDR.rate = monsterDropsArray.rate;
-			tempIDR.type = monsterDropsArray.type;
-			itemDropRecordArray[counter] = tempIDR;
-			counter++;
-		}
+		if (monsterDropsArray.rate > 0 && monsterDropsArray.type == "p") {
+			assert(!ppOnlyItemFound, "found more than one pp-only item!");
+			ppOnlyItemFound = true;
+			itemDropRecordArray[0] = new ItemDropRecord(monsterDropsArray.drop, monsterDropsArray.rate, monsterDropsArray.type);
+
+		} else if ((monsterDropsArray.rate > 0 || monsterDropsArray.type == "0") && (monsterDropsArray.type != "n" && monsterDropsArray.type != "b"))
+			itemDropRecordArray[counter++] = new ItemDropRecord(monsterDropsArray.drop, monsterDropsArray.rate, monsterDropsArray.type);
 	}
 
 	return itemDropRecordArray;
+}
+
+
+boolean hasPPOnly(monster amon) {
+	return ppItemDropsArray(amon)[0].type == "p";
 }
 
 
@@ -1064,6 +1075,12 @@ boolean is_skillbook(item anItem) {
 }
 
 
+// TODO this doesn't return true when we can't equip due to stat requirements
+boolean is_equipment(item anItem) {
+	return can_equip(anItem);
+}
+
+
 boolean is_hatchling(item anItem) {
 	return hatchlings() contains anItem;
 }
@@ -1136,8 +1153,54 @@ void notesForLocation(location aLocation) { // location notes locationnotes
 
 
 
+// this stuff belongs below with the other CLL stuff, but it is used for isCopyable()
+// returns the list of all reminiscences stored in the combat lover's locket
+// caches the result on the first access, use cllReminiscenceClearCache() to clear it
+boolean [monster] cllReminiscence() {
+	boolean [monster] monsterList;
+
+	if (!property_exists("_smm.CLLMonsters")) {
+		// NOT CACHED
+		string pageString = visit_url("/inventory.php?reminisce=1", false, false);
+		matcher monsterMatcher = create_matcher("<option value=\"([0-9]+)\" >(.*?)</option>", pageString);
+		while (find(monsterMatcher)) {
+			monster aMonster = group(monsterMatcher, 2).to_monster();
+			int monID = group(monsterMatcher, 1).to_int();
+			monsterList[aMonster] = true;
+		}
+
+		// STORE IN CACHE
+		foreach aMonster, ignore in monsterList {
+			string startChar = char_at(aMonster, 0);
+			string storedProperty = get_property("_smm.CLLMonstersStartingWith" + startChar);
+			string storedString = aMonster.to_int() + "\t";
+			if (!storedProperty.contains_text("," + storedString) && !storedProperty.starts_with(storedString)) {
+				storedProperty += storedString;
+				set_property("_smm.CLLMonstersStartingWith" + startChar, storedProperty);
+			}
+		}
+		set_property("_smm.CLLMonsters", true);
+
+	} else {
+		// CACHE
+		foreach aPropertyName, ignore in get_all_properties("_smm.CLLMonstersStartingWith", false) {
+			string [int] monsterIds = get_property(aPropertyName).split_string("\t");
+			foreach idx, anID in monsterIds {
+				monsterList[to_monster(anID)] = true;
+			}
+		}
+	}
+
+	return monsterList;
+}
+
+// returns true iff the combat lover's locket can reminisce about aMonster
+boolean cllHasReminiscence(monster aMonster) {
+	return cllReminiscence() contains aMonster;
+}
+
 boolean isCopyable(monster aMonster) {
-	return !aMonster.boss;
+	return cllHasReminiscence(aMonster);
 }
 
 
@@ -2462,6 +2525,11 @@ boolean stockItem(int limit, int stockAmount, item theItem) {
 }
 
 
+boolean stockAllItem(item theItem, int minPrice, int limit) {
+	return stockItem(minPrice, limit, available_amount(theItem) + shop_amount(theItem), theItem);
+}
+
+
 
 // given an array of amounts indexed by items and prices, will attempt to purchase the amount of each item at the specified price.
 void buySpecials(int [item, int] buyMap) {
@@ -2490,7 +2558,27 @@ void buySpecials(int [item, int] buyMap) {
 
 
 
+// returns the crafting cost of the given ingredients
+// returns 0 if any of the ingredients are not purchasable
+int craftingCost(int [item] ingredients, boolean printReceipt) {
+	int rval;
+	int amtMeatPaste = count(ingredients) - 1;
+	foreach anItem, amt in ingredients {
+		int buyPrice = cheapest_price(anItem);
+		if (buyPrice == 0)
+			return 0;
+		rval += buyPrice * amt;
+
+		if (printReceipt)
+			printReceiptItem(anItem, amt, buyPrice);
+	}
+	return rval;
+}
+
+
+
 // returns the possible profit from buying materials and selling the result (or vice versa)
+// returns 0 if any mat is un-buyable
 int arbitrage(item arbIt, boolean shouldPrint) {
 	int craftingCost;
 	int buyPrice = cheapest_price(arbIt);
@@ -2500,18 +2588,22 @@ int arbitrage(item arbIt, boolean shouldPrint) {
 	if (count(ingredients) > 0) {
 		int amtMeatPaste = count(ingredients) - 1;
 		cprint(shouldPrint, "crafting breakdown:");
-		if (shouldPrint) {
+		if (shouldPrint)
 			printReceiptItem($item[meat paste], amtMeatPaste, 10);
-			craftingCost = printReceipt(ingredients, false) + (amtMeatPaste * 10);
-		} else
-			craftingCost = receiptTotal(ingredients, false) + (amtMeatPaste * 10);
+		craftingCost = craftingCost(ingredients, true);
+		if (craftingCost == 0) {
+			cprint(shouldPrint, "crafting " + arbIt + ": at least one ingredient cannot be bought.");
+			return 0;
+		}
 		cprint(shouldPrint, "TOTAL of " + (count(ingredients) + 1) + " ingredients @ " + craftingCost + " meat (estimated)", "green");
+
 	} else {
 		cprint(shouldPrint, "not craftable");
 	}
 
 	int profit = buyPrice - craftingCost;
 	cprint(shouldPrint, "potential profit: " + profit);
+	cprint(shouldPrint, "");
 	return profit;
 }
 
@@ -2520,17 +2612,15 @@ int arbitrage(item arbIt) {
 }
 
 
-// recursive arbitrage
+// recursive arbitrage, returns the profit on the top-level item ONLY
 int arrbitrage(item arbIt, boolean shouldPrint) {
-	int profit;
-
-	profit = arbitrage(arbIt, shouldPrint);
+	int profit = arbitrage(arbIt, shouldPrint);
 	int [item] ingredients = get_ingredients(arbIt);
 	if (count(ingredients) > 0) {
-		foreach it, amt in ingredients {
-			if (count(get_ingredients(it)) > 0)
-				profit += arrbitrage(it, shouldPrint);
-		}
+		foreach it, amt in ingredients 
+			if (count(get_ingredients(it)) > 0) {
+				arrbitrage(it, shouldPrint);
+			}
 	}
 
 	cprint(shouldPrint, "total potential profit on " + arbIt + ": " + profit);
@@ -2544,26 +2634,34 @@ int arrbitrage(item arbIt) {
 
 
 // tries to make a profit by buying the ingredients, crafting arbIt, and putting on the market
-// TODO: make a profit by untinkering?
 void doArbitrage(item arbIt, int stockTarget) {
 	int mallPrice = cheapest_price(arbIt);
-	int kMinProfitThreshold = max(ceil(mallPrice * 0.05), 100);
+	int kMinProfitThreshold = max(ceil(mallPrice * 0.2), 100);
 
 	int amountToCraft = max(stockTarget - shop_amount(arbIt), 0);
 	int profit = arbitrage(arbIt, true);
 	print("doArbitrage: " + arbIt + " stock target: " + stockTarget + " current stock: " + shop_amount(arbIt) + " delta: " + amountToCraft + ", expected profit per item: " + profit, "green");
 	if (profit < kMinProfitThreshold) {
-		print("not enough profit to be made on " + arbIt);
+		print("not enough profit to be made on creating " + arbIt, "orange");
+		return;
+	}
+	if (amountToCraft <= 0) {
+		print("store is already stocked!");
 		return;
 	}
 
 	int [item] ingredients = get_ingredients(arbIt);
-	if (count(ingredients) > 0) {
+	if (profit >= kMinProfitThreshold && count(ingredients) > 0) {
 		foreach it, amt in ingredients {
 			int amtToBuy = amt * amountToCraft;
-			int maxPrice = max(ceil(historical_price(it) * 1.01), 100);
-			if (buy(it, amtToBuy, maxPrice) != amtToBuy)
-				abort("count not buy " + amtToBuy + " of " + it + " @ " + maxPrice);
+			int maxPrice = max(ceil(mall_price(it) * 1.03), 100); // every % of slop here will cut into profit
+
+			int amtBought = buy(it, amtToBuy, maxPrice);
+
+			if (amtBought != amtToBuy && amtBought > 0)
+				amountToCraft = amtBought / amt; // craft what we can
+			else if (amtBought == 0 || amountToCraft == 0)
+				abort("wanted " + amtToBuy + " but only got " + amtBought + " of " + it + " @ "  + maxPrice);
 		}
 	} else {
 		print("we can't craft " + arbIt + ", no arbitrage opportunities");
@@ -2584,12 +2682,11 @@ void doArrbitrage(item arbIt, int stockTarget) {
 	int amountToCraft = max(stockTarget - shop_amount(arbIt), 0);
 	int profit = arrbitrage(arbIt, false);
 // 	print("doArrbitrage: " + arbIt + " stock target: " + stockTarget + " current stock: " + shop_amount(arbIt) + " delta: " + amountToCraft + ", expected profit per item: " + profit, "green");
-	if (profit < kMinProfitThreshold) {
-		print("not enough profit to be made on " + arbIt);
-		return;
-	}
+	if (profit >= kMinProfitThreshold)
+		doArbitrage(arbIt, stockTarget);
+	else
+		print("not enough profit to be made on " + arbIt, "orange");
 
-	doArbitrage(arbIt, stockTarget);
 	int [item] ingredients = get_ingredients(arbIt);
 	if (count(ingredients) > 0) {
 		foreach it, amt in ingredients {
@@ -2643,10 +2740,146 @@ void printSkillDescription(skill aSkill) {
 
 
 
+// returns 0 if the item gives no MP as recorded in the mafia database
+float costPerMPGained(item anItem) {
+	int mallPrice = mall_price(anItem);
+	effect anEffect = effect_modifier(anItem, "Effect");
+	if (anEffect != $effect[none]) {
+		float mpPerTurn = (numeric_modifier(anEffect, "MP Regen Min") + numeric_modifier(anEffect, "MP Regen Max")) / 2;
+		int effectTurns = numeric_modifier(anItem, "Effect Duration");
+		return mallPrice/(mpPerTurn * effectTurns);
+	} else {
+		float avgMP = (anItem.minmp + anItem.maxmp) / 2;
+		if (avgMP == 0)
+			return 0;
+		return mallPrice/avgMP;
+	}
+}
+
+void printMPCost(item anItem, float costPerMPGained) {
+	int mallPrice = mall_price(anItem);
+	effect anEffect = effect_modifier(anItem, "Effect");
+	if (anEffect != $effect[none]) {
+		float mpPerTurn = (numeric_modifier(anEffect, "MP Regen Min") + numeric_modifier(anEffect, "MP Regen Max")) / 2;
+		int effectTurns = numeric_modifier(anItem, "Effect Duration");
+		print(anItem + ": " + to_string(mpPerTurn, "%.1f") + "mp/turn for " + effectTurns + " turns @" + mallPrice + ", " + costPerMPGained.to_string(, "%.3f") + "meat/mp");
+	} else {
+		float avgMP = (anItem.minmp + anItem.maxmp) / 2;
+		print(anItem + ": " + to_string(avgMP, "%.1f") + "mp @" + mallPrice + ", " + costPerMPGained.to_string("%.3f") + "meat/mp");
+	}
+}
+
+// cheapest mp restore
+void restoreMPEconomics() {
+	item [int] restoreItems = {
+		$item[mangled finger],
+		$item[neurostim pill],
+		$item[irradiated turtle],
+		$item[orcish hand lotion],
+		$item[carbonated water lily],
+		$item[honey-dipped locust],
+		$item[Monstar energy beverage],
+		$item[ancient magi-wipes],
+		$item[Doc Galaktik's Invigorating Tonic],
+		$item[Dyspepsi-Cola],
+		$item[Cloaca-Cola],
+		$item[phonics down],
+		$item[carbonated soy milk],
+		$item[tiny house],
+		$item[knob goblin seltzer],
+		$item[Notes from the Elfpocalypse, Chapter I],
+		$item[Mountain Stream soda],
+		$item[dueling turtle],
+		$item[elven magi-pack],
+		$item[grogpagne],
+		$item[Egnaro berry],
+		$item[magical mystery juice],
+		$item[shard of double-ice], // stand-in for April Shower
+	};
+
+	float [item] itemToMPGainPerMeat = {
+		$item[Egnaro berry] : mall_price($item[Egnaro berry]) / (my_maxmp() / 2.0),
+		$item[shard of double-ice] : (3.5 * mall_price($item[shard of double-ice])) / min(1000, my_maxmp()), // opportunity cost of April Shower
+	};
+	foreach idx, it in restoreItems {
+		if ( ! (itemToMPGainPerMeat contains it))
+			itemToMPGainPerMeat[it] = costPerMPGained(it);
+	}
+
+	sort restoreItems by itemToMPGainPerMeat[value];
+
+	foreach idx, it in restoreItems {
+		printMPCost(it, itemToMPGainPerMeat[it]);
+	}
+
+// 	print("gulp latte: 'free'");
+// 	print("april shower: 1000mp @" + (3.5 * mall_price($item[shard of double-ice])) + " meat, " + ((3.5 * mall_price($item[shard of double-ice])) / min(1000, my_maxmp())) + " meat/mp");
+// 	print("magical mystery juice: " + ((my_level() * 1.5) + 5) + "mp @45 meat, " + to_string(45 / ((my_level() * 1.5) + 5), "%.3f") + " meat/mp");
+// 	printMPCost($item[mangled finger]);
+// 	printMPCost($item[neurostim pill]);
+// 	printMPCost($item[irradiated turtle]);
+// 	printMPCost($item[orcish hand lotion]);
+// 	printMPCost($item[carbonated water lily]);
+// 	printMPCost($item[honey-dipped locust]);
+// 	printMPCost($item[Monstar energy beverage]);
+// 	printMPCost($item[ancient magi-wipes]);
+// 	printMPCost($item[Doc Galaktik's Invigorating Tonic]);
+// 	printMPCost($item[Dyspepsi-Cola]);
+// 	printMPCost($item[Cloaca-Cola]);
+// 	printMPCost($item[phonics down]);
+// 	printMPCost($item[carbonated soy milk]);
+// 	printMPCost($item[tiny house]);
+// 	printMPCost($item[knob goblin seltzer]);
+// 	printMPCost($item[Notes from the Elfpocalypse, Chapter I]);
+// 	printMPCost($item[Mountain Stream soda]);
+// 	printMPCost($item[dueling turtle]);
+// 	printMPCost($item[elven magi-pack]);
+// 	printMPCost($item[grogpagne]);
+// 	print("Egnaro berry: " + floor(my_maxmp() / 2.0) + " @" + mall_price($item[Egnaro berry]) + " meat, " + (1.0 * mall_price($item[Egnaro berry]) / (my_maxmp() / 2)) + " meat/mp");
+}
+
+
+string mpCostHTML(item anItem) {
+	string rval = "";
+
+	int mallPrice = mall_price(anItem);
+	effect anEffect = effect_modifier(anItem, "Effect");
+	if (anEffect != $effect[none]) {
+		float mpPerTurn = (numeric_modifier(anEffect, "MP Regen Min") + numeric_modifier(anEffect, "MP Regen Max")) / 2;
+		int effectTurns = numeric_modifier(anItem, "Effect Duration");
+		rval = "<tr><td>" + anItem + "</td><td>" + to_string(mpPerTurn, "%.1f") + "mp/turn for " + effectTurns + " turns</td><td>" + mallPrice + "</td><td>" + to_string(mallPrice/(mpPerTurn * effectTurns), "%.3f") + "</td></tr>";
+	} else {
+		float avgMP = (anItem.minmp + anItem.maxmp) / 2;
+		rval = "<tr><td>" + anItem + "</td><td>" + to_string(avgMP, "%.1f") + "mp</td><td>" + mallPrice + "</td><td>" + to_string(mallPrice/avgMP, "%.3f") + "</td><tr>";
+	}
+
+	return rval;
+}
+
+void cheapestMPRegenHTML() {
+	string mpTable = "<table><thead><tr><td>name</td><td>mp restored</td><td>mall price</td><td>meat/mp</td></tr></thead><tbody>";
+	mpTable += "<tr><td>magical mystery juice</td><td>" + ((my_level() * 1.5) + 5) + "mp</td><td>45</td><td>" + to_string(45 / ((my_level() * 1.5) + 5), "%.3f") + "</td></tr>";
+	mpTable += mpCostHTML($item[mangled finger]);
+	mpTable += mpCostHTML($item[neurostim pill]);
+	mpTable += mpCostHTML($item[irradiated turtle]);
+	mpTable += mpCostHTML($item[orcish hand lotion]);
+	mpTable += mpCostHTML($item[carbonated water lily]);
+	mpTable += mpCostHTML($item[Monstar energy beverage]);
+	mpTable += "<tr></tr>";
+	mpTable += "<tr><td>Egnaro berry</td><td>" + floor(my_maxmp() / 2.0) + "</td><td>" + mall_price($item[Egnaro berry]) + " meat</td><td>" + to_string(1.0 * mall_price($item[Egnaro berry]) / (my_maxmp() / 2), "%.3f") + "</td></tr>";
+	mpTable += "<tr><td>april shower</td><td>1000mp</td><td>" + (3.5 * mall_price($item[shard of double-ice])) + " meat</td><td>" + to_string((3.5 * mall_price($item[shard of double-ice])) / 1000, "%.3f") + "</td></tr>";
+	mpTable += "<tr><td>gulp latte</td><td>" + floor(my_maxmp() / 2.0) + "</td><td>n/a</td><td>n/a</td></tr>";
+	mpTable += "</tbody></table>";
+
+	print_html(mpTable);
+	print("");
+}
+
+
+
 // monster description monster details
 void printMonsterDetails(monster aMonster) {
-	print(aMonster);
-	print("id: " + aMonster.id);
+	print("[" + aMonster.id + "]" + aMonster);
 	print("base_hp: " + aMonster.base_hp);
 	print("base_attack: " + aMonster.base_attack);
 	print("base_defense: " + aMonster.base_defense);
@@ -2667,15 +2900,19 @@ void printMonsterDetails(monster aMonster) {
 
 // print item details item description
 void printItemDetails(item anItem) {
-	print("name: " + anItem.name);
+	print("[" + anItem.to_int() + "]" + anItem.name);
 	print("levelreq: " + anItem.levelreq);
 	print("quality: " + anItem.quality);
 	print("adventures: " + anItem.adventures);
 	print("fullness: " + anItem.fullness);
+	print("muscle: " + anItem.muscle);
+	print("mysticality: " + anItem.mysticality);
+	print("moxie: " + anItem.moxie);
 	print("inebriety: " + anItem.inebriety);
 	print("spleen: " + anItem.spleen);
 	print("minhp: " + anItem.minhp);
 	print("maxhp: " + anItem.maxhp);
+	print("notes: " + anItem.notes);
 	print("combat: " + anItem.combat);
 	print("combat_reusable: " + anItem.combat_reusable);
 	print("usable: " + anItem.usable);
@@ -2765,6 +3002,63 @@ int monsterCurrentMeatDropValue(monster mob) {
 
 
 
+string ppTypeToString(string aTypeChar) {
+	switch (aTypeChar) {
+		case "": return "normal";
+		case "0": return "no info available";
+		case "n": return "not pp-able";
+		case "c": return "conditional";
+		case "p": return "pp-only";
+		case "b": return "bounty";
+	}
+	print("unknown pickpocket type: " + aTypeChar);
+	return "";
+}
+
+
+float pp_chance(monster mob) {
+	float discount = 1.0;
+	foreach idx, idr in ppItemDropsArray(mob) {
+		if (idr.type != "n" && idr.type != "b") {
+			float ppPercent = idr.rate * ((numeric_modifier("Pickpocket Chance") / 100.0) + 1.0) * discount;
+			int meatValue = historical_price(idr.drop) * (ppPercent / 100) * discount;
+			discount = discount * (1 - (ppPercent / 100));
+		}
+	}
+
+	return 1.0 - discount;
+}
+
+
+int monsterPPMeatValue(monster mob, float bonusPPDrop, boolean doPrint) {
+	float rval;
+	cprint(doPrint, mob + " pp-able items with pp bonus: " + bonusPPDrop + "%", "blue");
+
+	float discount = 1.0;
+	foreach idx, idr in ppItemDropsArray(mob) {
+		if (idr.type != "n" && idr.type != "b") {
+			float ppPercent = idr.rate * ((bonusPPDrop / 100.0) + 1.0) * discount;
+			float meatValue = historical_price(idr.drop) * (ppPercent / 100) * discount;
+			rval += meatValue;
+			cprint(doPrint, idr.drop + ": " + idr.rate + "% drop, discounted pp chance: " + ppPercent + "% - " + ppTypeToString(idr.type) + " @ " + historical_price(idr.drop) + ", discount: " + discount + ", value: " + meatValue, idr.type == "p" ? "green" : "");
+
+			discount = discount * (1 - (ppPercent / 100));
+		}
+	}
+
+	return rval;
+}
+
+int monsterPPMeatValue(monster mob, float bonusPPDrop) {
+	return monsterPPMeatValue(mob, bonusPPDrop, true);
+}
+
+int monsterPPMeatValue(monster mob) {
+	return monsterPPMeatValue(mob, numeric_modifier("Pickpocket Chance"), true);
+}
+
+
+
 // returns the meat value dropped by the given mob at the given item and meat drop level
 int monsterTotalMeatValue(monster mob, float bonusItemDrop, float bonusMeatDrop) {
 // 	float meatDrop = meat_drop(mob) * (1 + bonusMeatDrop/100);
@@ -2831,6 +3125,52 @@ void printMonsterBasePickpocketDrops(monster mob) {
 
 void printMonsterCurrentPickpocketDrops(monster mob) {
 	printMonsterPickpocketDrops(mob, pickpocketChance());
+}
+
+
+// returns creatable items mapped to number of turns to craft
+// creatable means we have the mats available or can buy them
+int [item] creatableItems(boolean doPrint) {
+	int [item] rval;
+	int i;
+	foreach it in $items[] {
+		
+		if (count(get_ingredients(it)) > 0 && creatable_amount(it) > 0) {
+			i++;
+			rval[it] = creatable_turns(it, 1, false);
+			cprint(doPrint, it + " craftable with " + rval[it] + " turns, profit from crafting: " + arbitrage(it, false));
+		}
+	}
+
+	cprint(doPrint, "total creatable items: " + i);
+
+	return rval;
+}
+
+int [item] creatableItems() {
+	return creatableItems(true);
+}
+
+
+// returns craftable items mapped to number of turns to craft
+int [item] craftableItems(boolean doPrint) {
+	int [item] rval;
+	int i;
+	foreach it in $items[] {
+		if (count(get_ingredients(it)) > 0) {
+			i++;
+			rval[it] = creatable_turns(it, 1, false);
+			cprint(doPrint, it + " craftable with " + rval[it] + " turns, profit from crafting: " + arbitrage(it, false));
+		}
+	}
+
+	cprint(doPrint, "total craftable items: " + i);
+
+	return rval;
+}
+
+int [item] craftableItems() {
+	return craftableItems(true);
 }
 
 
@@ -4170,6 +4510,19 @@ float hobopolisCompletion() {
 // IOTM ITEMS OF THE MONTH
 // -------------------------------------
 
+// ensures we have the right familiar before mumming
+void safeMumming(familiar aFamiliar, string mumBuff) {
+	if (get_property("_mummeryMods").contains_text(aFamiliar)) {
+		print(aFamiliar + " already has a mumming trunk buff");
+		return;
+	}
+
+	use_familiar(aFamiliar);
+	assert(my_familiar() == aFamiliar, "unable to switch to " + aFamiliar);
+	boolean unused = cli_execute("mummery " + mumBuff);
+}
+
+
 // TODO should probably be in unrestricted.ash? needed by automation.ash
 void doseRobortender() {
 	if (!get_property("_roboDrinks").contains_text("Newark")) {
@@ -4293,6 +4646,7 @@ float roboDropChanceForLocation(location roboLo) {
 
 
 
+// returns the meat value of equipping the robortender for the given monster
 int roboEconomicsForMonster(monster roboMo, boolean doPrint) {
 	int bestValue = 100;
 	float baseDropChance = roboDropChance();
@@ -4506,7 +4860,7 @@ int [location] luckyAdventuresByMeatGainMap() {
 }
 
 
-location [] sortedLuckyAdventuresByMeatGain(boolean shouldPrint) {
+location [] luckyEconomics(boolean shouldPrint) {
 	int [location] luckyAdventuresByMeatGainMap = luckyAdventuresByMeatGainMap();
 	location [int] sortableLucky;
 	int idx;
@@ -4522,8 +4876,37 @@ location [] sortedLuckyAdventuresByMeatGain(boolean shouldPrint) {
 	return sortableLucky;
 }
 
-location [] sortedLuckyAdventuresByMeatGain() {
-	return sortedLuckyAdventuresByMeatGain(true);
+location [] luckyEconomics() {
+	return luckyEconomics(true);
+}
+
+
+
+// prints meat gain info at CURRENT bonus drop
+int [monster] pickpocketEconomics(boolean doPrint) {
+	int [monster] rval;
+	monster [int] allMons;
+	int idx;
+	foreach amon in $monsters[] {
+		allMons[idx++] = amon;
+	}
+
+	sort allMons by monsterPPMeatValue(value, 0, false);
+
+	cprint(doPrint, "value of picketpocketing this monster:");
+	foreach i, amon in allMons {
+		if (isCopyable(amon)) {
+			int ppVal = monsterPPMeatValue(amon, 0, false);
+			cprint(doPrint, amon + " @ "  + ppVal, hasPPOnly(amon) ? "green" : "");
+			rval[amon] = ppVal;
+		}
+	}
+
+	return rval;
+}
+
+int [monster] pickpocketEconomics() {
+	return pickpocketEconomics(true);
 }
 
 
@@ -4531,9 +4914,9 @@ location [] sortedLuckyAdventuresByMeatGain() {
 // uses the briefcase to get anEffect until anEffect has minimumNumberOfTurns
 boolean briefcase_if_needed(effect anEffect, int minimumNumberOfTurns) {
 	string [effect] BriefcaseEffectsMap = {
-		$effect[A View to Some Meat]:"meat",
-		$effect[Items Are Forever]:"item",
-		$effect[Initiative and Let Die]:"init"
+		$effect[A View to Some Meat] : "meat",
+		$effect[Items Are Forever] : "item",
+		$effect[Initiative and Let Die] : "init"
 	};
 
 	int clicksUsed = to_int(get_property("_kgbClicksUsed"));
@@ -5088,10 +5471,20 @@ boolean isFloundryLocation(location testLocation) {
 
 
 
+// get the beach comb effect associated with the given choice number
 void getBeachCombBuff(int effectNumber) {
 	visit_url("/main.php?comb=1");
 	visit_url("/choice.php?whichchoice=1388&pwd&option=3&buff=" + effectNumber);
 	run_choice(5);
+}
+
+
+// save savAmt free beach combs and burn the rest #beachcomber #beach comber #beachcombing #beach combing #combbeach #comb beach
+void burnFreeCombs(int saveAmt) {
+	boolean unused;
+	int combs = 11 - get_property("_freeBeachWalksUsed").to_int() - saveAmt;
+	if (combs > 0)
+		unused = cli_execute("combo " + combs);
 }
 
 
@@ -5268,7 +5661,9 @@ int cosmicBowlingBallReturnCombats() {
 
 
 
-// returns the monsters we've fought with the combat lover's locket
+// combat lover's locket #combat locket #combatlocket
+
+// returns the monsters we've fought with the combat lover's locket, 3 per day, each has to be unique
 boolean [monster] cllMonstersFought(boolean shouldPrint) {
 	boolean [monster] rval;
 	string monstersFoughtString = get_property("_locketMonstersFought");
@@ -5292,56 +5687,26 @@ int cllNumMonstersFought() {
 }
 
 
-void printMonsterArray(boolean [monster] someMon) {
-	if (count(someMon) > 0)
-		foreach aMonster in someMon {
+boolean cllHasFought(monster amon) {
+	return cllMonstersFought(false) contains amon;
+}
+
+
+void printMonsterArray(boolean [monster] someMons) {
+	if (count(someMons) > 0) {
+		monster [int] sortableMons;
+		int idx;
+		foreach amon in someMons
+			sortableMons[idx++] = amon;
+		sort sortableMons by value.to_string();
+
+		foreach i, aMonster in sortableMons
 			print("[" + aMonster.to_int() + "]" + aMonster);
-		}
-	else
+	} else
 		print("no monsters");
-	print("total monsters: " + count(someMon));
+	print("total monsters: " + count(someMons));
 }
 
-
-boolean [monster] cllReminiscence() {
-	boolean [monster] monsterList;
-
-	if (!property_exists("_smm.CLLMonsters")) {
-		// NOT CACHED
-		string pageString = visit_url("/inventory.php?reminisce=1", false, false);
-		matcher monsterMatcher = create_matcher("<option value=\"([0-9]+)\" >(.*?)</option>", pageString);
-		while (find(monsterMatcher)) {
-			monster aMonster = group(monsterMatcher, 2).to_monster();
-			int monID = group(monsterMatcher, 1).to_int();
-	// 		print("[" + monID + "]" + aMonster);
-			if (aMonster.isCopyable())
-				monsterList[aMonster] = true;
-		}
-
-		// STORE IN CACHE
-		foreach aMonster, ignore in monsterList {
-			string startChar = char_at(aMonster, 0);
-			string storedProperty = get_property("_smm.CLLMonstersStartingWith" + startChar);
-			string storedString = aMonster.to_int() + "\t";
-			if (!storedProperty.contains_text("," + storedString) && !storedProperty.starts_with(storedString)) {
-				storedProperty += storedString;
-				set_property("_smm.CLLMonstersStartingWith" + startChar, storedProperty);
-			}
-		}
-		set_property("_smm.CLLMonsters", true);
-
-	} else {
-		// CACHE
-		foreach aPropertyName, ignore in get_all_properties("_smm.CLLMonstersStartingWith", false) {
-			string [int] monsterIds = get_property(aPropertyName).split_string("\t");
-			foreach idx, anID in monsterIds {
-				monsterList[to_monster(anID)] = true;
-			}
-		}
-	}
-
-	return monsterList;
-}
 
 void cllReminiscenceClearCache() {
 	remove_property("_smm.CLLMonsters");
@@ -5393,30 +5758,46 @@ void printCLLNoReminiscence(location atLocation) {
 }
 
 
-// returns true iff the combat lover's locket can reminisce about aMonster
-boolean cllHasReminiscence(monster aMonster) {
-	return cllReminiscence() contains aMonster;
+void printCLLReminiscencesMatching(string monsterMatchString) {
+	print("combat locket reminiscences matching '" + monsterMatchString + "':");
+
+	boolean [monster] matchingRems;
+	foreach amon in cllReminiscence() {
+		string amonString = amon.to_lower_case();
+		string matchingString = monsterMatchString.to_lower_case();
+		if (amonString.contains_text(matchingString))
+			matchingRems[amon] = true;
+	}
+
+	printMonsterArray(matchingRems);
 }
 
 
-int combatLoversLocketenomics() {
-	int rval;
-
+monster [int] combatLoversLocketenomics(boolean doPrint) {
 	boolean [monster] allMons = cllReminiscence();
 	monster [int] sortableMons;
 	int idx;
 	foreach amon in allMons {
 		sortableMons[idx++] = amon;
 	}
-	sort sortableMons by value.monsterCurrentTotalMeatValue();
+	sort sortableMons by -value.monsterCurrentTotalMeatValue();
 
-	print("value of each combat lover's locket reminiscence at current +item/+meat: " + item_drop_modifier() + "%/" + meat_drop_modifier() + "%");
+	if (doPrint)
+		print("value of each combat lover's locket reminiscence at current +item/+meat: +" + item_drop_modifier().to_string("%.1f") + "% / +" + meat_drop_modifier().to_string("%.1f") + "%");
+
 	foreach ind, amon in sortableMons {
 		int monMeat = monsterCurrentTotalMeatValue(amon);
-		rval += monMeat;
-		print(amon + ": " + monMeat);
+		if (doPrint)
+			print(amon + ": " + monMeat);
 	}
-	return rval;
+	if (doPrint)
+		print("total monsters: " + idx);
+
+	return sortableMons;
+}
+
+monster [int] combatLoversLocketenomics() {
+	return combatLoversLocketenomics(true);
 }
 
 
@@ -5603,7 +5984,7 @@ PrioritySkillRecord [int] banishSkillData(boolean availableWhenInUse, location a
 	tempBSR.isAvailableNow = ((equipped_amount($item[familiar scrapbook]) > 0 && have_skill($skill[Show Your Boring Familiar Pictures]))
 		 || (!isInCombat && canEquipWithExistingAutomatedDressup($item[familiar scrapbook])))
 		&& (availableWhenInUse || !using_banish($skill[Show Your Boring Familiar Pictures], aLocation));
-// 	bsrArray[i++] = tempBSR; // TODO the skill seems to be bugged
+	bsrArray[i++] = tempBSR; // TODO the skill seems to be bugged??? Seems to work now???
 
 	// KGB tranquilizer dart
 	tempBSR = new PrioritySkillRecord();
@@ -5996,23 +6377,26 @@ void preAdventureChecks() {
 // returns true iff there were goals at the start of the adventure and all goals were satisfied in the last adventure
 boolean postAdventure() {
 	print("postAdventure", "green");
+	monster lastMonster = last_monster();
 
-	assert(!inCombat(), "postAdventure: shouldn't be in combat");
-	assert(!handling_choice(), "postAdventure: shouldn't be in a choice");
-
-	// setSmutOrcPervertProgress  -- MOVED TO advURLWithWanderingMonsterRedirect
-// 	if (my_location() == $location[The Smut Orc Logging Camp]) {
-// 		setSmutOrcPervertProgress(smutOrcPervertProgress() + 1);
-// 		print("setting smutOrcPervertProgress to: " + smutOrcPervertProgress() + ", turns spent in zone: " + $location[The Smut Orc Logging Camp].turns_spent + ", turns in zone for last pervert: " + to_int(get_property(kLastSmutOrcPervertTurnsSpentKey)));
-// 	}
-	if (last_monster() == $monster[smut orc pervert]) {
+	// setSmutOrcPervertProgress
+	if (my_location() == $location[The Smut Orc Logging Camp]) {
+		setSmutOrcPervertProgress(smutOrcPervertProgress() + 1);
+		print("setting smutOrcPervertProgress to: " + smutOrcPervertProgress() + ", turns spent in zone: " + $location[The Smut Orc Logging Camp].turns_spent + ", turns in zone for last pervert: " + to_int(get_property(kLastSmutOrcPervertTurnsSpentKey)));
+	}
+	if (lastMonster == $monster[smut orc pervert]) {
 		int lastSmutOrcPervertTurnsSpent = to_int(get_property(kLastSmutOrcPervertTurnsSpentKey));
 		print("found Smut Orc Pervert, progress was " + smutOrcPervertProgress() + ", resetting progress to 0 -- turns spent in zone: " + $location[The Smut Orc Logging Camp].turns_spent + ", turns in zone for last pervert: " + lastSmutOrcPervertTurnsSpent, "orange");
 		set_property(kLastSmutOrcPervertTurnsSpentKey, $location[The Smut Orc Logging Camp].turns_spent - 1);
 		setSmutOrcPervertProgress(0);
 	}
 
-	if (!inRonin()) {
+	// bug fix for feelNostalgicMonster, which doesn't seem to update
+	if (lastMonster != get_property("feelNostalgicMonster").to_monster()
+		&& isCopyable(lastMonster))
+		set_property("feelNostalgicMonster", lastMonster);
+
+	if (!inRonin() && !inCombat() && !handling_choice()) {
 		cli_execute("dreadstopper");
 
 		// put in storage items that get auto-used and which we don't want to be auto-used
@@ -6025,7 +6409,7 @@ boolean postAdventure() {
 		put_closet(item_amount($item[sand dollar]), $item[sand dollar]);
 		put_closet(item_amount($item[hobo nickel]), $item[hobo nickel]);
 
-		// can't get these if we have any in our inventory
+		// can't get the superlikely adventure if we have any in our inventory
 		put_closet(item_amount($item[Elf Farm Raffle ticket]), $item[Elf Farm Raffle ticket]);
 
 		// having none allows them to drop from the Boxing Daydream
@@ -6064,7 +6448,8 @@ boolean postAdventure() {
 				print("we can switch workshed items now, and we're done with the cold medicine cabinet for today");
 		}
 
-	} else { // IN RONIN
+	// IN RONIN
+	} else if (!inCombat() && !handling_choice()) {
 		// FIREWORKS -- ensure we have one rocket of each colour at all times
 		if (my_meat() > 2500) {
 			if (item_amount($item[red rocket]) == 0 && have_effect($effect[Everything Looks Red]) == 0)
@@ -6179,6 +6564,17 @@ void burnScavengeDaycare(int turnsToSpend) {
 		daycareGymScavenges = to_int(get_property("_daycareGymScavenges"));
 		nextScavengeTurnCost = min(daycareGymScavenges, 3);
 	}
+}
+
+
+
+// enter combat with the given monster via the combat lover's locket
+void cllGetToFight(monster fightMon) {
+	assert(cllNumMonstersFought() < 3, "not enough combat lover's locket fights");
+	assert(!cllHasFought(fightMon), "we already fought that monster");
+
+	advURL("/inventory.php?reminisce=1");
+	visit_url("/choice.php?whichchoice=1463&pwd&option=1&mid=" + fightMon.to_int(), true, false);
 }
 
 
