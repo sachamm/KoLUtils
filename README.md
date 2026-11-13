@@ -6,7 +6,7 @@ Installation
 ----------------
 Run this command in the graphical CLI:
 <pre>
-svn checkout https://github.com/sachamm/KoLUtils/branches/main/
+git checkout sachamm/KoLUtils
 </pre>
 Will require [a recent build of KoLMafia](http://builds.kolmafia.us/job/Kolmafia/lastSuccessfulBuild/).
 
@@ -157,3 +157,15 @@ boolean isPPUseful(location aLocation)
 </pre>
 
 Returns true if at least one monster has a pickpocketable item at the given (or current) location.
+
+
+Local development
+-----------------
+Edit scripts in this repository. On the development Mac, individual files in
+both KoLmafia scripts directories are symbolic links to these source files,
+so saved edits are immediately available in KoLmafia.
+
+Do not install this same repository through KoLmafia Git or SVN on that Mac:
+the updater can replace the development links. Other scripts can still update
+normally. Commit and push here to publish changes; other installations can
+install this repository with the Git command above.
