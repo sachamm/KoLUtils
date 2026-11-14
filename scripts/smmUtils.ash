@@ -109,13 +109,15 @@ record PrioritySkillRecord {
 
 // the final version of the priority scheme
 record PriorityRecord {
-	string customCombatString; // when this game object is used in combat (skill, combat item)
-	string maximizeString;	// NEW string to run through maximize to ensure we are dressed properly
-	int mpCost;             // estimated cost of the skill in mp
-	int meatCost;           // estimated cost of the skill in meat -- use the default cost of a turn if the skill costs turns (such as Batter Up!)
-	float priority;         // whole part is the group, fractional part only affects which is chosen if usesAvailable are equal
-	int usesAvailable;      // number available to use assuming all conditions are met (i.e. the item is worn, have enough mana, etc.)
-	boolean isAvailableNow; // if we had uses available, could we cast it now?
+	string cliExecuteString;   // when this game object is used outside of combat (skill, potion, item)
+	string customCombatString; // when this game object is used in combat (skill, item, potion, combat item)
+	string maximizeString;	   // NEW string to run through maximize to ensure we are dressed properly
+	int mpCost;                // estimated cost of the skill in mp
+	int meatCost;              // estimated cost of the skill in meat -- use the default cost of a turn if the skill costs turns (such as Batter Up!)
+	int duration;              // duration of the effect, if applicable
+	float priority;            // whole part is the group, fractional part only affects which is chosen if other things are equal
+	int usesAvailable;         // number available to use assuming all conditions are met (i.e. the item is worn, have enough mana, etc.)
+	boolean isAvailableNow;    // if we had uses available, could we cast it now?
 };
 
 
@@ -134,7 +136,8 @@ record AnalyzeRecord {
 
 int kMaxInt = 2147483647;
 int kMinInt = -2147483648;
-int kUnlimitedUses = kMaxInt;
+int kUnlimitedUses = 1000; // a number we could never expect to use in a day
+int kIndefiniteBanish = 500; // roughly the most turns we can expect to do in a day
 
 int kTurnValue = "smm.TurnValue".get_property() == "" ? 5000 : get_property("smm.TurnValue").to_int(); // the value of a turn
 
@@ -187,7 +190,6 @@ string kSmutOrcPervertProgressKey = "smm.SmutOrcPervertProgress";
 string kLastSmutOrcPervertTurnsSpentKey = "smm.LastSmutOrcPervertTurnsSpent";
 
 string kSpaceJellyfishDeepSauceCollectedKey = "_smm.SpaceJellyfishDeepSauceCollected";
-string kSotsQuestLocationKey = "_smm.sotsQuestLocation";
 
 
 // number of seconds between refreshing and restocking the store
@@ -348,7 +350,7 @@ location [string] kLatteLocations = {
 	"Macaroni" : $location[The Haunted Pantry], // +20 max hp
 	"mega sausage" : $location[Cobb's Knob Laboratory], // +50 mox
 	"motor oil" : $location[The Old Landfill], // +20 sleaze dmg
-	"MSG" : $location[The Briniest Deepests], // 
+	"MSG" : $location[The Briniest Deepests], //
 	"norwhal milk" : $location[The Ice Hole], // +200% max hp -- not unlocked by default
 	"oil paint" : $location[The Haunted Gallery], // +5 pris dmg
 	"paradise milk" : $location[The Stately Pleasure Dome], // +20 all stat -- not unlocked by default
@@ -559,9 +561,17 @@ boolean arrayContains(PrioritySkillRecord [] array, PrioritySkillRecord test) {
 	return false;
 }
 
+boolean arrayContains(PriorityRecord [] array, PriorityRecord test) {
+	foreach idx, psr in array {
+		if (psr.cliExecuteString == test.cliExecuteString && psr.customCombatString == test.customCombatString && psr.maximizeString == test.maximizeString)
+			return true;
+	}
+	return false;
+}
 
 
-// cribbed from bastille.ash 
+
+// cribbed from bastille.ash
 void arrayAppend(int [int] list, int entry) {
 	int position = list.count();
 	while (list contains position)
@@ -871,23 +881,24 @@ int availableFreeCraftTurns(string type) {
 	int inigosFreeCraftTurns = floor(have_effect($effect[Inigo's Incantation of Inspiration]) / 5.0);
 	int cutCornersFreeCraftTurns = 5 - to_int(get_property("_expertCornerCutterUsed"));
 	int homebodylFreeCraftTurns = to_int(get_property("homebodylCharges"));
+	int holidyMultitaskingFreeCraftTurns = to_int(get_property("holidayMultitaskingCharges"));
 
 	int cbbFreeFoodTurns = 5 - to_int(get_property("_cookbookbatCrafting"));
 
-	int universalFreeCraftingTurns = rapidPrototypingFreeCraftTurns + inigosFreeCraftTurns + cutCornersFreeCraftTurns + homebodylFreeCraftTurns;
+	int universalFreeCraftingTurns = rapidPrototypingFreeCraftTurns + inigosFreeCraftTurns + cutCornersFreeCraftTurns + homebodylFreeCraftTurns + holidyMultitaskingFreeCraftTurns;
 	int foodOnlyFreeCraftingTurns = cbbFreeFoodTurns;
 	int drinkOnlyFreeCraftingTurns = 0;
 	int meatOnlyFreeCraftingTurns = 0;
 
 	if (type == "food-only") return foodOnlyFreeCraftingTurns;
 	if (type == "drink-only") return drinkOnlyFreeCraftingTurns;
-	if (type == "meat-only") return meatOnlyFreeCraftingTurns;
+	if (type == "paste-only") return meatOnlyFreeCraftingTurns;
 
 	if (type == "universal") return universalFreeCraftingTurns;
 
 	if (type == "food") return universalFreeCraftingTurns + foodOnlyFreeCraftingTurns;
 	if (type == "drink") return universalFreeCraftingTurns + drinkOnlyFreeCraftingTurns;
-	if (type == "meat") return universalFreeCraftingTurns + meatOnlyFreeCraftingTurns;
+	if (type == "paste") return universalFreeCraftingTurns + meatOnlyFreeCraftingTurns;
 
 	assert(type == "all", "unknown type: " + type);
 	return universalFreeCraftingTurns + foodOnlyFreeCraftingTurns + drinkOnlyFreeCraftingTurns + meatOnlyFreeCraftingTurns;
@@ -915,14 +926,6 @@ void refreshMallPrice(item it) {
 int get_price(item itm, float age) {
 	if (historical_age(itm) < age) return historical_price(itm);
 	return mall_price(itm);
-}
-
-
-// parse the mall page directly, useful for items with low sales volumes
-int low_volume_price(item anItem) {
-	string aPage = visit_url("https://www.kingdomofloathing.com/mall.php?didadv=0&pudnuggler=" + anItem + "&category=allitems&food_sortitemsby=name&booze_sortitemsby=name&othercon_sortitemsby=name&consumable_byme=0&hats_sortitemsby=name&shirts_sortitemsby=name&pants_sortitemsby=name&weapons_sortitemsby=name&weaponattribute=3&weaponhands=3&acc_sortitemsby=name&offhand_sortitemsby=name&wearable_byme=0&famequip_sortitemsby=name&nolimits=0&justitems=0&sortresultsby=price&max_price=0&x_cheapest=0&consumable_tier_1=0&consumable_tier_2=0&consumable_tier_3=0&consumable_tier_4=0&consumable_tier_5=0", false, false);
-	print_html(aPage);
-	return 0;
 }
 
 
@@ -1021,7 +1024,7 @@ boolean isCraftable(item anItem) {
 // returns the number of craftable we can make given the current availability of mats (including if it is purchase-able)
 int craftable_amount(item craftable, boolean buyMats) {
 	int rval = kMaxInt;
-	assert(isCraftable(craftable), craftable + " is not craftable");
+	assert(isCraftable(craftable), "craftable_amount: " + craftable + " is not craftable");
 	foreach mat, amt in get_ingredients(craftable) {
 		int avail;
 		if (buyMats && current_historical_price(mat) > 0)
@@ -1042,7 +1045,7 @@ int craftable_amount(item craftable, boolean buyMats) {
 }
 
 boolean have_mats(item craftable, int needed) {
-	assert(isCraftable(craftable), craftable + " is not craftable");
+	assert(isCraftable(craftable), "have_mats: " + craftable + " is not craftable");
 	return craftable_amount(craftable, false) >= needed;
 }
 
@@ -1368,7 +1371,176 @@ int preferExistingAcquire(item acquireItem, int targetAmt, int maxCost) {
 
 
 
-// assumes potions are items with effects and no fullness or inebriety
+boolean isFood(item it) {
+	return it.fullness > 0;
+}
+
+boolean isBooze(item it) { # isDrink
+	return it.inebriety > 0;
+}
+
+boolean isSpleen(item it) {
+	return it.spleen > 0;
+}
+
+
+boolean isPotion(item it) {
+    effect potEff = effect_modifier(it, "effect");
+    return it.usable && potEff != $effect[none]
+        && ! (isFood(it) || isBooze(it) || isSpleen(it));
+}
+
+
+
+// returns the average number of adventures gained by eating/drinking the given item
+float nutrition(item food_booze) {
+	matcher aMatcher = create_matcher("([0-9]+)-?([0-9]*)", food_booze.adventures);
+	if (!find(aMatcher))
+		abort("nutrition: non-food/non-booze -- or at least non-adventure generating: " + food_booze + ", adventures: " + food_booze.adventures);
+
+	string lowString = group(aMatcher, 1);
+	string highString = group(aMatcher, 2);
+	int low = to_int(lowString);
+	int high = to_int(highString);
+
+	if (highString == "" && lowString == 0) // 0 adventures? use a default based on quality
+		return kQualityStringToPerAdventureMap[food_booze.quality] * (food_booze.inebriety + food_booze.fullness);
+	else if (highString == "")
+		return low;
+	else // take the average, the default and most usual case
+		return (low + high) / 2;
+}
+
+
+boolean isNutritious(item it) {
+	return nutrition(it) > 0;
+}
+
+boolean [item] nutritiousItems() {
+	boolean [item] rval;
+	return rval;
+}
+
+
+
+int turnValue() {
+    return "smm.TurnValue".get_property() == "" ? 5000 : get_property("smm.TurnValue").to_int(); // the value of a turn
+}
+
+
+// best food for the current stomach value, based on turn value
+item bestFood(boolean useFillerIfRequired) {
+    item foodItem = $item[baked veggie ricotta casserole];
+    item fillItem = $item[roasted vegetable of Jarlsberg];
+    if (! useFillerIfRequired || my_fullness() - fullness_limit() >= foodItem.fullness) {
+        return foodItem;
+    } else {
+        return fillItem;
+    }
+}
+
+
+float turnsPerStomach(item stomachItem) {
+    return stomachItem.nutrition() / stomachItem.fullness.to_float();
+}
+
+// the number of turns generated by the best food
+float turnsPerStomach() {
+    return turnsPerStomach(bestFood(false));
+}
+
+
+// value of 1 fullness consuming the best food
+int stomachValue() {
+    return turnsPerStomach() * turnValue();
+}
+
+
+int foodOpportunityCost(item foodItem) {
+    return foodItem.fullness * turnsPerStomach(bestFood(false)) * turnValue();
+}
+
+
+
+item bestDrink(boolean useFillerIfRequired) {
+    item drinkItem = $item[perfect dark and stormy];
+    item fillItem = $item[splendid martini];
+    if (! useFillerIfRequired || my_inebriety() - inebriety_limit() >= drinkItem.inebriety) {
+        return drinkItem;
+    } else {
+        return fillItem;
+    }
+}
+
+
+float turnsPerLiver(item liverItem) {
+    return liverItem.nutrition() / liverItem.inebriety;
+}
+
+// the number of turns generated by the best drink
+float turnsPerLiver() {
+    return turnsPerLiver(bestDrink(false));
+}
+
+
+// value of 1 inebriety consuming the best drink
+int liverValue() {
+    return turnsPerLiver() * turnValue();
+}
+
+
+int boozeOpportunityCost(item drinkItem) {
+    return drinkItem.inebriety * turnsPerLiver(bestDrink(false)) * turnValue();
+}
+
+
+
+item bestSpleen(boolean useFillerIfRequired) {
+    item spleenItem = $item[grim fairy tale]; // 4 spleen -- OR use prismatic wad @ 3 spleen
+    item fillItem = $item[transdermal smoke patch];
+    if (! useFillerIfRequired || my_spleen_use() - spleen_limit() >= spleenItem.spleen) {
+        return spleenItem;
+    } else {
+        return fillItem;
+    }
+}
+
+
+// returns the opportunity cost of consuming the given item. Opportunity cost is the difference
+// between the adv gain of the given item and the adv gain of our default diet multiplied by
+// the cost of a turn -- AND might be negative, i.e. there's no cost to doing it, only gain
+float turnsPerSpleen(item spleenItem) {
+	assert(spleenItem.spleen > 0, "spleen item doesn't take up any spleen?");
+	return spleenItem.nutrition() / spleenItem.spleen;
+}
+
+float turnsPerSpleen() {
+	return turnsPerSpleen(bestSpleen(false));
+}
+
+
+int spleenValue() {
+    return turnsPerSpleen() * turnValue();
+}
+
+
+int spleenOpportunityCost(item spleenItem) {
+    return spleenItem.spleen * turnsPerSpleen(bestSpleen(false)) * turnValue();
+}
+
+
+
+// returns the opportunity cost of consuming the given item, which could be 0 if the item is 
+// not consumable or is and costs no adventures, or even negative if the item costs little and gives adventures
+int opportunityCostToConsume(item toConsume) {
+	if (isFood(toConsume)) return foodOpportunityCost(toConsume);
+	if (isBooze(toConsume)) return boozeOpportunityCost(toConsume);
+	if (isSpleen(toConsume)) return spleenOpportunityCost(toConsume);
+	return 0;
+}
+
+
+
 item [] allOffhand() {
 	item [int] sortArray;
 	int ctr;
@@ -1389,54 +1561,26 @@ item [] allOffhand() {
 
 
 // assumes potions are items with effects and no fullness or inebriety
-item [] allPotions() {
+item [] allPotions(boolean shouldPrint) {
 	item [int] sortArray;
 	int ctr;
 	// marshal the data
 	foreach it in $items[] {
-		effect potEff = effect_modifier(it, "effect");
-		if (potEff != $effect[none] && it.fullness == 0 && it.inebriety == 0)
+		if (it.isPotion())
 			sortArray[ctr++] = it;
 	}
 	sort sortArray by -value.current_historical_price();
 
 	foreach idx, it in sortArray {
 		effect potEff = effect_modifier(it, "effect");
-// 		print(it + ": " + potEff + "@" + it.current_historical_price());
+		cprint(shouldPrint, it + ": " + potEff + "@" + it.current_historical_price());
 	}
 	return sortArray;
 }
 
-
-// sorted by cost/turn/weight buffed
-float [item] potionsThatBuffFamWt() {
-	item [int] sortArray;
-	int ctr;
-	float [item] rval;
-
-	// marshal the data
-	foreach idx, it in allPotions() {
-		effect potEff = effect_modifier(it, "effect");
-		if (potEff.numeric_modifier("Familiar Weight") > 0.0) {
-			sortArray[ctr++] = it;
-		}
-	}
-
-	sort sortArray by -(value.current_historical_price() / value.numeric_modifier("Effect Duration") / value.effect_modifier("effect").numeric_modifier("Familiar Weight"));
-
-	foreach idx, it in sortArray {
-		effect potEff = it.effect_modifier("effect");
-		float duration = it.numeric_modifier("Effect Duration");
-		int weightBuff = potEff.numeric_modifier("Familiar Weight");
-		float price = it.current_historical_price();
-		float costPerTurnPerWeight = price / duration / weightBuff;
-		print(it + ": " + potEff + "@" + price + " -- cost per turn per weight: " + costPerTurnPerWeight + " -- effect " + potEff + " modifiers: " + potEff.string_modifier("Modifiers"));
-		rval[it] = costPerTurnPerWeight;
-	}
-
-	return rval;
+item [] allPotions() {
+    return allPotions(true);
 }
-
 
 
 // number of accordion thief buffs / effects currently active
@@ -1445,7 +1589,7 @@ int accordionSongsActive() {
 	int [effect] currentEffects = my_effects(); // Array of current active effects
 	foreach buff in currentEffects {
 		skill currentEffect = to_skill(buff);
-		if (currentEffect.class == $class[accordion thief] && currentEffect.buff) { // True if AT buff 
+		if (currentEffect.class == $class[accordion thief] && currentEffect.buff) { // True if AT buff
 			rval++;
 		}
 	}
@@ -1529,6 +1673,18 @@ void logEquipment() {
 
 
 
+void unequip(item unequipItem) {
+    if (have_equipped(unequipItem)) {
+        foreach aSlot in $slots[] {
+            if (equipped_item(aSlot) == unequipItem) {
+                equip(aSlot, $item[none]);
+                break;
+            }
+        }
+    }
+}
+
+
 void unequipAll(boolean unequipFamiliar) {
 // 	visit_url("/inv_equip.php?pwd&action=unequipall", true, false); // doesn't seem to be an actual shortcut
 	foreach slt in $slots[] {
@@ -1539,69 +1695,6 @@ void unequipAll(boolean unequipFamiliar) {
 
 void unequipAll() {
 	unequipAll(true);
-}
-
-
-
-boolean isFood(item it) {
-	return it.fullness > 0;
-}
-
-boolean isBooze(item it) {
-	return it.inebriety > 0;
-}
-
-boolean isSpleen(item it) {
-	return it.spleen > 0;
-}
-
-
-// returns the average number of adventures gained by eating/drinking the given item
-float nutrition(item food_booze) {
-	matcher aMatcher = create_matcher("([0-9]+)-?([0-9]*)", food_booze.adventures);
-	if (!find(aMatcher))
-		abort("nutrition: non-food/non-booze: " + food_booze + ", adventures: " + food_booze.adventures);
-
-	string lowString = group(aMatcher, 1);
-	string highString = group(aMatcher, 2);
-	int low = to_int(lowString);
-	int high = to_int(highString);
-
-	if (highString == "" && lowString == 0) // 0 adventures? use a default based on quality
-		return kQualityStringToPerAdventureMap[food_booze.quality] * (food_booze.inebriety + food_booze.fullness);
-	else if (highString == "")
-		return low;
-	else
-		return (low + high) / 2;
-}
-
-
-boolean isNutritious(item it) {
-	return nutrition(it) > 0;
-}
-
-boolean [item] nutritiousItems() {
-	boolean [item] rval;
-	return rval;
-}
-
-
-
-// returns the opportunity cost of consuming the given item. Opportunity cost is the difference
-// between the adv gain of the given item and the adv gain of our default diet multiplied by
-// the cost of a turn -- AND might be negative, i.e. there's no cost to doing it, only gain
-float turnsPerSpleen(item spleenItem) {
-	assert(spleenItem.spleen > 0, "spleen item doesn't take up any spleen?");
-	return spleenItem.nutrition() / spleenItem.spleen;
-}
-
-
-
-// returns the opportunity cost of consuming the given item. Opportunity cost is the difference
-// between the adv gain of the given item and the adv gain of our default diet multiplied by
-// the cost of a turn -- AND might be negative, i.e. there's no cost to doing it, only gain
-int opportunityCostOfConsuming(item toConsume) {
-	return 0;
 }
 
 
@@ -1729,7 +1822,7 @@ item potionOfDoom(string potionName) {
 			return i.to_item();
 	}
 
-	assert(false, "potionOfDoom: should never get here");
+	assert(false, "potionOfDoom: should never get here, potionName: " + potionName);
 	return $item[none];
 }
 
@@ -2153,7 +2246,7 @@ void setMood(string moodString) {
 // 	setMoodRaw(parsedMoodString); // so we can properly detect the expression
 // 	if (activeFacialExpression() == $skill[none] && !moodString == "apathetic")
 // 		parsedMoodString = parsedMoodString.moodStringAppend("defaultfacialexpression");
-// 
+//
 // 	setMoodRaw(parsedMoodString); // so we can properly count the songs in the mood
 // 	int songSpace = maxAccordionSongs() - count(activeSongs());
 // 	print("song space: " + songSpace);
@@ -2249,7 +2342,7 @@ boolean burnHP(int buffTurns) {
 // 			print("max mp " + numeric_modifier("Generated:_spec", "Maximum MP"));
 // 			if (numeric_modifier("Generated:_spec", "Maximum MP") < my_mp()) mp_mod *= 10;
 // 		} until (tries > 3 || numeric_modifier("Generated:_spec", "Maximum MP") >= my_mp());
-// 
+//
 // 		if (numeric_modifier("Generated:_spec", "Maximum MP") < my_mp())
 // 			abort("unable to get more hp without losing mp");
 // 	}
@@ -2388,7 +2481,7 @@ void burnMP(int burnAmount) {
 		restoreSavedProperty("logPreferenceChange");
 	}
 
-	// burn as much of the rest as we can on Gygaxian Libram -- this should actually be part of the "burn" command above, just putting it here in case
+	// burn as much of the rest as we can on Gygaxian Libram
 	while ((my_mp() - mp_cost($skill[Summon Dice])) > targetMP && use_skill(1, $skill[Summon Dice]));
 
 	// if we still have mp to burn here, dump it all on one buff to avoid wasting it -- this also makes future burning quicker since it will have 1 less buff to top up
@@ -2400,6 +2493,8 @@ void burnMP(int burnAmount) {
 // 				break;
 // 			}
 // 	}
+
+    print("burnMP done, mp: " + my_mp(), "blue");
 }
 
 void burnMP() {
@@ -2569,6 +2664,12 @@ void healAndRemoveDebuffsWithMPRestore() {
 
 
 
+// TODO detect preferences for threshold to heal and amount to heal up to for both hp and mp
+void recoverHPandMP() {
+}
+
+
+
 // returns true if a counter is set to expire between now and max_turns
 boolean check_counters(int max_turns, boolean should_abort) {
 	string kCounterWarningDoneKey = "_smm.CounterWarningDone";
@@ -2599,14 +2700,17 @@ boolean check_counters(boolean should_abort) {
 
 
 
-// returns true if the given page is an error page
+// returns true if the given page is an error page TODO probably a more efficient way to do this
 boolean isErrorPage(string checkPage) {
 	if (checkPage == "") return true;
-	if (checkPage.contains_text("A voice from the terminal says")) return true; // error at ??
+	if (checkPage.contains_text("A voice from the terminal says")) return true; // error at ?? Source Terminal?
 	if (checkPage.contains_text("<td>You shouldn't be here.<center>")) return true; // not dressed for Obligatory Pirate's Cove
-	if (checkPage.contains_text("<td>You're not currently at sea.<center>")) return true; // adv at PirateRealm sea, but we're at a PR island
 	if (checkPage.contains_text("That isn't a place you can get to the way you're dressed.")) return true; // not dressed for Palindome
 	if (checkPage.contains_text("Resistance Required]")) return true; // not enough elemental res
+
+	if (checkPage.contains_text("<td>You're not currently at sea.<center>")) return true; // adv at PirateRealm sea, but we're not at sea
+	if (checkPage.contains_text("You're not currently on island time.")) return true; // adv at PirateRealm Island, but we're not at an island
+	if (checkPage.contains_text("None of your stats can be higher than 100")) return true; // stats too high for PR
 
 	return false;
 }
@@ -2632,6 +2736,23 @@ boolean isOysterDay() {
 
 boolean isSneakyPeteDay() {
 	return holiday().contains_text("St. Sneaky Pete's Day");
+}
+
+
+
+// returns the number of the last choice option -- which is usually the "do nothing" or "get out of here" option
+int last_choice_option() {
+	int lastChoiceOption;
+	string [int] choices = available_choice_options();
+	foreach num, choice_text in choices {
+		lastChoiceOption = num;
+	}
+	return lastChoiceOption;
+}
+
+// run_choice on the the last choice option -- which is usually the "do nothing" or "get out of here" option
+buffer run_last_choice_option() {
+	return run_choice(last_choice_option());
 }
 
 
@@ -2909,10 +3030,11 @@ boolean wantsToEquip(string maxString, slot checkSlot) {
 
 	int offHands = 1;
 	int totalHands = 2;
-	if (my_familiar() == $familiar[left-hand man]) {
-		totalHands++;
-		offHands++;
-	}
+    // maximizing with the Left-Hand Man doesn't work
+	//if (my_familiar() == $familiar[Left-Hand Man]) {
+	//	totalHands++;
+	//	offHands++;
+	//}
 
 	int weaponsEquipped = 0;
 	int offhandsEquipped = 0;
@@ -3025,7 +3147,7 @@ string macroForAction(ActionRecord theAction) {
 	else if (theAction.item2ToUse == $item[none])
 		return "use " + theAction.itemToUse + ";";
 	else
-		return "use " + theAction.itemToUse + ", " + theAction.item2ToUse + ";";
+		return "use " + theAction.itemToUse.to_int() + ", " + theAction.item2ToUse.to_int() + ";";
 }
 
 string macroForActions(ActionRecord [int] actions) {
@@ -3051,6 +3173,9 @@ string equipStringForAction(ActionRecord theAction) {
 
 
 
+// PRIORTY QUEUE STUFF
+
+
 void printPSR(PrioritySkillRecord toPrint) {
 	print("[" + toPrint.priority + "]" + toPrint.theSkill
 		+ " with item " + toPrint.theItem + "@" + toPrint.meatCost
@@ -3062,6 +3187,18 @@ void printPSRArray(PrioritySkillRecord [] arrayToPrint) {
 	print("");
 	foreach psrIndex, psrToPrint in arrayToPrint
 		printPSR(psrToPrint);
+}
+
+
+boolean isEmpty(PrioritySkillRecord psr) {
+	if (psr.theSkill != $skill[none]) return false;
+	if (psr.theItem != $item[none]) return false;
+	if (psr.mpCost != 0) return false;
+	if (psr.meatCost != 0) return false;
+	if (psr.priority != 0.0) return false;
+	if (psr.usesAvailable != 0) return false;
+
+	return true;
 }
 
 
@@ -3178,6 +3315,146 @@ int skillsAvailable(PrioritySkillRecord [] priorityData) {
 
 PrioritySkillRecord topPriority(PrioritySkillRecord [] priorityData) {
 	PrioritySkillRecord [] excludedData;
+	PrioritySkillRecord topPri = skillToUse(priorityData, $location[none], kMaxInt, excludedData);
+	assert(!isEmpty(topPri), "topPriority: no top priority returned!");
+	return topPri;
+}
+
+
+
+void printPR(PriorityRecord toPrint) {
+	print("[" + toPrint.priority + "]" + toPrint.maximizeString
+		+ " with cli script: " + toPrint.cliExecuteString + "@"
+		+ " with combat script: " + toPrint.customCombatString + "@" + toPrint.meatCost
+		+ ", " + toPrint.usesAvailable
+		+ " uses, available now: " + toPrint.isAvailableNow);
+}
+
+void printPRArray(PriorityRecord [] arrayToPrint) {
+	print("");
+	foreach prIndex, prToPrint in arrayToPrint
+		printPR(prToPrint);
+}
+
+
+
+PriorityRecord skillToUse(PriorityRecord [] skillData, location aLocation, int maxPerTurnCost, PriorityRecord [] excludedSkills) {
+	boolean isInCombat = inCombat();
+	print("skillToUse, in combat: " + isInCombat + ", location: " + aLocation + ", maxPerTurnCost: " + maxPerTurnCost);
+// 	printPSRArray(skillData);
+	PriorityRecord psr;
+
+	// start by getting the set of skills with the same lowest integer priority with usesAvailable > 0 and isAvailableNow
+	PriorityRecord [int] setOfSkillsSamePriority;
+	int prioritySetIndex = 0;
+	int lowestIntegerPriority = kMaxInt;
+	foreach idx in skillData {
+		psr = skillData[idx];
+		if (arrayContains(excludedSkills, psr)) {
+			print("excluding " + psr.maximizeString);
+			continue;
+		}
+		if (truncate(psr.priority) == lowestIntegerPriority && psr.usesAvailable > 0 && psr.isAvailableNow) {
+			setOfSkillsSamePriority[prioritySetIndex++] = psr;
+		} else if (truncate(psr.priority) < lowestIntegerPriority && psr.usesAvailable > 0 && psr.isAvailableNow) {
+			prioritySetIndex = 0;
+			clear(setOfSkillsSamePriority);
+			setOfSkillsSamePriority[prioritySetIndex++] = psr;
+			lowestIntegerPriority = truncate(psr.priority);
+		}
+	}
+	// should end up with a set of skills with the lowest integer priority and all available to use now
+// 	printPRArray(setOfSkillsSamePriority);
+
+	// select the set of skills with the highest usesAvailable within the results so far
+	PriorityRecord [int] setOfSkillsSameUses;
+	prioritySetIndex = 0;
+	int highestAvailableUses = 0;
+	foreach idx in setOfSkillsSamePriority {
+		psr = setOfSkillsSamePriority[idx];
+		if (psr.usesAvailable == highestAvailableUses) {
+			setOfSkillsSameUses[prioritySetIndex++] = psr;
+		} else if (psr.usesAvailable > highestAvailableUses) {
+			prioritySetIndex = 0;
+			clear(setOfSkillsSameUses);
+			setOfSkillsSameUses[prioritySetIndex++] = psr;
+			highestAvailableUses = psr.usesAvailable;
+		}
+	}
+	// should end up with a set of skills with the lowest integer priority and highest usesAvailable
+// 	printPRArray(setOfSkillsSameUses);
+
+	// select the skill with the highest fractional priority within the results so far
+	PriorityRecord [int] setOfSkillsLowestPriority;
+	prioritySetIndex = 0;
+	float lowestPriority = kMaxInt;
+	foreach idx in setOfSkillsSameUses {
+		psr = setOfSkillsSameUses[idx];
+		if (psr.priority == lowestPriority) {
+			setOfSkillsLowestPriority[prioritySetIndex++] = psr;
+		} else if (psr.priority < lowestPriority) {
+			prioritySetIndex = 0;
+			clear(setOfSkillsLowestPriority);
+			setOfSkillsLowestPriority[prioritySetIndex++] = psr;
+			lowestPriority = psr.priority;
+		}
+	}
+
+	print("skillToUse final recommendations:");
+	printPRArray(setOfSkillsLowestPriority);
+	// choose one of the remaining
+	int i = 0;
+	while (i < count(setOfSkillsLowestPriority)) {
+		psr = setOfSkillsSameUses[i];
+		// TODO: make sure we can equip the item
+        if (psr.meatCost / psr.duration <= maxPerTurnCost) {
+            print("choosing number " + i);
+            printPR(setOfSkillsLowestPriority[i]);
+            return setOfSkillsLowestPriority[i];
+        }
+	}
+
+	// if all the recommended are invalid (mostly because we can't equip the item for
+	// one reason or another -- not enough stats usually), add everything we got to the
+	// existing excludeSkills and try again
+	if(count(setOfSkillsLowestPriority) > 0) {
+ 		print("highest priority items are too expensive, excluding them and trying again", "orange");
+        // add the existing excluded skills to the new set
+        i = count(setOfSkillsLowestPriority);
+ 		foreach idx, psr in excludedSkills
+ 			setOfSkillsLowestPriority[i++] = psr;
+ 		return skillToUse(skillData, aLocation, maxPerTurnCost, setOfSkillsLowestPriority);
+	}
+
+	print("no available skill", "red");
+	print("current search data:");
+	printPRArray(skillData);
+	print("excluded skills:");
+	printPRArray(excludedSkills);
+	return new PriorityRecord();
+}
+
+// how many banishes do we have available right now? the fact that a banish is already in use doesn't matter
+int skillsAvailable(PriorityRecord [] priorityData, int maxCost) {
+	int rval;
+	foreach idx, psr in priorityData {
+		if (psr.isAvailableNow && (maxCost >= psr.meatCost)) {
+			if (psr.usesAvailable == kUnlimitedUses)
+				rval++;
+			else
+				rval += psr.usesAvailable;
+		}
+	}
+	return rval;
+}
+
+
+int skillsAvailable(PriorityRecord [] priorityData) {
+	return skillsAvailable(priorityData, kMaxInt);
+}
+
+PriorityRecord topPriority(PriorityRecord [] priorityData) {
+	PriorityRecord [] excludedData;
 	return skillToUse(priorityData, $location[none], kMaxInt, excludedData);
 }
 
@@ -3198,8 +3475,8 @@ boolean haveOutfit(string outfitName) {
 	}
 	else
 		rval = have_outfit(outfitName);
-		
-	print("haveOutfit: " + rval, "orange");
+
+	print("haveOutfit " + outfitName + ": " + rval, rval ? "green" : "orange");
 	return rval;
 }
 
@@ -3387,7 +3664,7 @@ boolean readyToOverdrink(boolean checkSpleen) {
 
 
 // returns true if we have yet to drink 1 drunkenness for the stooper
-boolean stooperPending() {
+boolean isStooperPending() {
 	boolean haveStooper = my_familiar() == $familiar[Stooper];
 	return (haveStooper && my_inebriety() < inebriety_limit()) || (!haveStooper && my_inebriety() <= inebriety_limit());
 }
@@ -3426,6 +3703,7 @@ int questStage(string questPropertyName) {
 	if (stage == "unstarted") return -1;
 	if (stage == "started") return 0;
 	if (stage == "finished") return kMaxInt;
+	if (stage == "") abort("questStage: no stage for " + questPropertyName);
 	return stage.substring(4).to_int();
 }
 
@@ -3714,70 +3992,16 @@ int [string] shelvesByItemCount() {
 
 
 
-// returns the value of the given index without having to dereference the string
-int amountAtRank(int aRank, int [int, string] aCollection) {
+int countTop10(int [int, string] top10List) {
 	int totalCount = 0;
-	foreach rank, name, num in aCollection {
-		totalCount++;
-		if (totalCount == aRank)
-			return num;
-	}
-	abort("could not find amount at rank " + aRank);
-	return 0;
-}
-
-
-string nameAtRank(int aRank, int [int, string] aCollection) {
-	int totalCount = 0;
-	foreach rank, name, num in aCollection {
-		totalCount++;
-		if (totalCount == aRank)
-			return name;
-	}
-	abort("could not find name at rank " + aRank);
-	return 0;
-}
-
-
-int countTop10(int [int, string] aCollection) {
-	int totalCount = 0;
-	foreach rank, name, num in aCollection {
+	foreach rank, name, num in top10List {
 		totalCount++;
 	}
 	return totalCount;
 }
 
 
-int rank1Amount(int [int, string] collection) {
-	return amountAtRank(1, collection);
-}
-
-// returns the amount at the lowest rank, even if there are fewer than 10 in the top 10
-int rank10Amount(int [int, string] collection) {
-	int rank = 10;
-	int top10Count = countTop10(collection);
-	if (top10Count < 10) {
-		print("fewer than 10 in the top 10!");
-		rank = top10Count;
-	}
-	return amountAtRank(rank, collection);
-}
-
-IntRange collectionRange(int [int, string] collection) {
-	IntRange rval;
-	rval.top = rank1Amount(collection);
-	rval.bottom = rank10Amount(collection);
-	return rval;
-}
-
-
-// returns true if the given item is in the top 10
-boolean in_top10(item anItem, int [int, string] collection) {
-	return display_amount(anItem) >= rank10Amount(collection);
-}
-
-
-// ensure there are 10 or 11 entries and that the ranks go sequentially from 1
+// ensure there are 10 or 11 entries and that the ranks go non-decreasing sequentially from 1
 boolean isValidTop10List(int [int, string] top10List) {
 	int followRank = 1;
 	int ties = 0;
@@ -3811,7 +4035,67 @@ boolean isValidTop10List(int [int, string] top10List) {
 }
 
 
+// returns the value of the given index without having to dereference the string
+int amountAtRank(int [int, string] aCollection, int aRank) {
+    assert(isValidTop10List(aCollection), "amountAtRank: not a valid top 10 list");
+	int totalCount = 0;
+	foreach rank, name, num in aCollection {
+		totalCount++;
+		if (totalCount == aRank)
+			return num;
+	}
+	abort("could not find amount at rank " + aRank);
+	return 0;
+}
+
+
+string nameAtRank(int [int, string] aCollection, int aRank) {
+    assert(isValidTop10List(aCollection), "nameAtRank: not a valid top 10 list");
+	int totalCount = 0;
+	foreach rank, name, num in aCollection {
+		totalCount++;
+		if (totalCount == aRank)
+			return name;
+	}
+	abort("could not find name at rank " + aRank);
+	return 0;
+}
+
+
+int rank1Amount(int [int, string] top10List) {
+    assert(isValidTop10List(top10List), "rank1Amount: not a valid top 10 list");
+	return amountAtRank(top10List, 1);
+}
+
+// strictly misnamed: returns the amount at the lowest rank, even if there are fewer than 10 in the top 10
+int rank10Amount(int [int, string] top10List) {
+    assert(isValidTop10List(top10List), "rank10Amount: not a valid top 10 list");
+	int rank = 10;
+	int top10Count = countTop10(top10List);
+	if (top10Count < 10) {
+		rank = top10Count;
+	}
+	return amountAtRank(top10List, rank);
+}
+
+IntRange collectionRange(int [int, string] top10List) {
+    assert(isValidTop10List(top10List), "collectionRange: not a valid top 10 list");
+	IntRange rval;
+	rval.top = rank1Amount(top10List);
+	rval.bottom = rank10Amount(top10List);
+	return rval;
+}
+
+
+// returns true if the amount of the given item in our display case is in the top 10
+boolean in_top10(item anItem, int [int, string] top10List) {
+    assert(isValidTop10List(top10List), "in_top10: not a valid top 10 list");
+	return display_amount(anItem) >= rank10Amount(top10List);
+}
+
+
 string toStringCompact(int [int, string] top10List) {
+    assert(isValidTop10List(top10List), "toStringCompact: not a valid top 10 list");
 	string rval;
 	foreach rank, name, num in top10List {
 		rval += rank + ". " + name + ": " + num + ", ";
@@ -3820,6 +4104,7 @@ string toStringCompact(int [int, string] top10List) {
 }
 
 string toString(int [int, string] top10List) {
+    assert(isValidTop10List(top10List), "toString: not a valid top 10 list");
 	string rval;
 	foreach rank, name, num in top10List {
 		rval += rank + ". " + name + ": " + num + "</br>\n";
@@ -3828,63 +4113,108 @@ string toString(int [int, string] top10List) {
 }
 
 void printTop10List(int [int, string] top10List) {
+    assert(isValidTop10List(top10List), "printTop10List: not a valid top 10 list");
 	print_html(toString(top10List));
 }
 
 
-// returns the top 10 list -- value is the number of items, indexed by user name and the top 10 rank number
-// tries Jicken Wings first, then the wiki if that doesn't work
-int [int, string] lookupCollection(item anItem) {
+// The current wiki renders Museum rankings as a Collection list. Keep the legacy
+// formats as fallbacks for older pages and the original collection database.
+int [int, string] parseCollectionPage(string pageString) {
 	int [int, string] top10List;
-
-	if (property_exists(kDCPropertyPrefix + anItem)) {
-		// CACHED
-		print("[" + anItem.to_int() + "]" + anItem + " @ " + current_price(anItem));
-		string cacheString = get_property(kDCPropertyPrefix + anItem);
-		matcher cacheMatcher = create_matcher("([0-9]+)\. (.*?): ([0-9]+), ", cacheString);
-		while (find(cacheMatcher)) {
-			int rank = group(cacheMatcher, 1).to_int();
-			string name = group(cacheMatcher, 2);
-			int amt = group(cacheMatcher, 3).to_int();
-			top10List[rank, name] = amt;
+	matcher collection = create_matcher("(?is)<div\\b[^>]*class=['\"][^'\"]*\\bcollection\\b[^'\"]*['\"][^>]*>(.*?)</div>", pageString);
+	if (find(collection)) {
+		matcher entries = create_matcher("(?is)<li\\b[^>]*>(.*?)</li>", group(collection, 1));
+		while (find(entries)) {
+			string entry = entity_decode(replace_all(create_matcher("(?s)<[^>]*>", group(entries, 1)), ""));
+			matcher row = create_matcher("^\\s*(🥇|🥈|🥉|#[0-9]+):\\s*(.*?)\\s*\\(#[0-9]+\\)\\s*-\\s*([0-9,]+)\\s*$", entry);
+			if (!find(row)) {
+				clear(top10List);
+				return top10List;
+			}
+			string label = group(row, 1);
+			int rank = label == "🥇" ? 1 : label == "🥈" ? 2 : label == "🥉" ? 3 : substring(label, 1).to_int();
+			string name = group(row, 2);
+			string amount = group(row, 3).replace_string(",", "");
+			top10List[rank, name] = amount.to_int();
 		}
-
-	} else {
-		// NOT CACHED
-		string pageString;
-		int tries = 3;
-		while (pageString == "" && tries > 0) {
-			pageString = visit_url("http://dcdb.coldfront.net/collections/index.cgi?query_value=" + to_int(anItem) + "&query_type=item", true, false);
-			tries--;
-		}
-
-		matcher itemMatcher = create_matcher("<tr><td bgcolor=\"blue\" align=\"center\" valign=\"center\"><font color=\"white\"><b>(.*) \\(#([0-9]+)\\)</b></font></td></tr>", pageString);
-		matcher range_matcher;
-		if (!find(itemMatcher)) {
-			print("problem reading page from coldfront, trying wiki", "orange");
-			string url = make_url("https://kol.coldfront.net/thekolwiki/index.php/" + anItem.replace_string(" ", "_").replace_string("?", "%3F"), false, false);
-			print(url);
-			pageString = visit_url(url);
-			range_matcher = create_matcher("([1-9]0?)\. <a href='.*?'>(.*?) - ([0-9]+)</a>", pageString);
-			print("[" + anItem.to_int() + "]" + anItem + " @ " + current_price(anItem));
-		} else {
-			print("[" + group(itemMatcher, 2) + "]" + group(itemMatcher, 1) + " @ " + current_price(anItem));
-			range_matcher = create_matcher("<tr><td bgcolor=\"white\" align=\"center\" valign=\"center\"><b>([0-9]+)</b></td>.*?<b>([^<]*)</b>.*?<b>([0-9,]+)</b></td></tr>", pageString);
-		}
-
-		int foundCount;
-		for i from 1 to 11 {
-			if (find(range_matcher))
-				top10List[group(range_matcher, 1).to_int(), group(range_matcher, 2)] = to_int(group(range_matcher, 3));
-			else
-				break;
-		}
+		return top10List;
 	}
-
-	assert(isValidTop10List(top10List), "lookupCollection: something wrong with the top 10 list:\n" + toString(top10List));
-	set_property(kDCPropertyPrefix + anItem, toStringCompact(top10List));
-
+	matcher rows = create_matcher("<tr><td bgcolor=\"white\" align=\"center\" valign=\"center\"><b>([0-9]+)</b></td>.*?<b>([^<]*)</b>.*?<b>([0-9,]+)</b></td></tr>", pageString);
+	while (find(rows))
+		top10List[group(rows, 1).to_int(), group(rows, 2)] = group(rows, 3).replace_string(",", "").to_string().to_int();
+	if (!isValidTop10List(top10List)) {
+		clear(top10List);
+		rows = create_matcher("([1-9]0?)\\. <a href=['\"][^'\"]*['\"]>(.*?) - ([0-9,]+)</a>", pageString);
+		while (find(rows))
+			top10List[group(rows, 1).to_int(), group(rows, 2)] = group(rows, 3).replace_string(",", "").to_string().to_int();
+	}
 	return top10List;
+}
+
+// Museum is the current source behind the wiki's Collection section. Its item
+// page also works for clients that receive HTTP 403 from the wiki.
+int [int, string] parseMuseumCollectionPage(string pageString) {
+	int [int, string] top10List;
+	matcher rows = create_matcher("(?is)<tr\\b[^>]*>(.*?)</tr>", pageString);
+	while (find(rows)) {
+		string row = group(rows, 1);
+		if (!contains_text(row, "href=\"/player/"))
+			continue;
+		row = replace_all(create_matcher("(?is)<style\\b[^>]*>.*?</style>", row), "");
+		matcher cells = create_matcher("(?is)<td\\b[^>]*>(.*?)</td>", row);
+		string [int] values;
+		int idx;
+		while (find(cells)) {
+			string text = entity_decode(replace_all(create_matcher("(?s)<[^>]*>", group(cells, 1)), ""));
+			values[idx++] = replace_all(create_matcher("^\\s+|\\s+$", text), "");
+		}
+		if (idx < 3) {
+			clear(top10List);
+			return top10List;
+		}
+		string label = values[0];
+		int rank = label == "🥇" ? 1 : label == "🥈" ? 2 : label == "🥉" ? 3 : label.starts_with("#") && length(label) > 1 ? substring(label, 1).to_int() : 0;
+		if (rank > 10)
+			break;
+		string amount = values[2].replace_string(",", "");
+		if (rank < 1 || !amount.is_integer() || amount.to_int() < 1) {
+			clear(top10List);
+			return top10List;
+		}
+		top10List[rank, values[1]] = amount.to_int();
+	}
+	return top10List;
+}
+
+// Returns a validated ranking list. Optional lookups return an empty map on failure;
+// an unavailable list must never be used to decide how many items to move or buy.
+int [int, string] lookupCollection(item anItem, boolean required) {
+	int [int, string] top10List;
+	print("[" + anItem.to_int() + "]" + anItem + " @ " + current_price(anItem));
+	string cacheString = get_property(kDCPropertyPrefix + anItem);
+	matcher cacheMatcher = create_matcher("([0-9]+)\\. (.*?): ([0-9]+), ", cacheString);
+	while (find(cacheMatcher))
+		top10List[group(cacheMatcher, 1).to_int(), group(cacheMatcher, 2)] = group(cacheMatcher, 3).to_int();
+
+	// Museum is the sole network source for collection rankings.
+	if (!isValidTop10List(top10List))
+		top10List = parseMuseumCollectionPage(visit_url("https://museum.loathers.net/item/" + to_int(anItem), false, false));
+
+	if (!isValidTop10List(top10List)) {
+		clear(top10List);
+		if (required)
+			abort("lookupCollection: top 10 rankings unavailable for " + anItem);
+		print("Top 10 rankings unavailable for " + anItem + "; skipping ranking operations.", "orange");
+		return top10List;
+	}
+	set_property(kDCPropertyPrefix + anItem, toStringCompact(top10List));
+	return top10List;
+}
+
+// Preserve the strict behavior expected by other scripts.
+int [int, string] lookupCollection(item anItem) {
+	return lookupCollection(anItem, true);
 }
 
 
@@ -4010,7 +4340,7 @@ int adventureGainAtRollover(boolean shouldSimulate) {
 	if (gameday_to_string() == "Carlvember 5") adv += 10;
 
 	return adv;
-}  
+}
 
 int adventureGainAtRollover() {
 	return adventureGainAtRollover(false);
@@ -4018,7 +4348,7 @@ int adventureGainAtRollover() {
 
 int myAdventuresAtRollover(boolean shouldSimulate) {
 	return adventureGainAtRollover() + my_adventures();
-}  
+}
 
 // total adventures at rollover based on what you have on now
 int myAdventuresAtRollover() {
@@ -4275,7 +4605,7 @@ void buySpecials(int [item, int] buyMap) {
 
 // ensures we have the mats to craft craftable, buying them if we don't have them
 boolean ensure_have_mats(item craftable, int needed) {
-	assert(isCraftable(craftable), craftable + " is not craftable");
+	assert(isCraftable(craftable), "ensure_have_mats: " + craftable + " is not craftable");
 
 	foreach mat, amt in get_ingredients(craftable) {
 		int avail = available_amount(mat);
@@ -4303,7 +4633,7 @@ boolean ensure_have_mats(item craftable) {
 // profit is based on the crafting cost and EITHER the current market value, OR the current price in our shop, whichever is lower
 // returns 0 if any mat is both unbuyable and uncraftable
 int arbitrage(item arbIt, boolean shouldPrint) {
-	assert(isCraftable(arbIt), arbIt + " is not craftable");
+	assert(isCraftable(arbIt), "arbitrage: " + arbIt + " is not craftable");
 	int buyPrice = current_price(arbIt);
 	int myPrice = shop_price(arbIt);
 	int sellPrice = myPrice > 0 ? min(buyPrice, myPrice) : buyPrice;
@@ -4333,7 +4663,7 @@ int arbitrage(item arbIt) {
 int arrbitrage(item arbIt, boolean shouldPrint) {
 	int [item] ingredients = get_ingredients(arbIt);
 	if (count(ingredients) > 0) {
-		foreach it, amt in ingredients 
+		foreach it, amt in ingredients
 			if (count(get_ingredients(it)) > 0) {
 				arrbitrage(it, shouldPrint);
 			}
@@ -4507,8 +4837,8 @@ void printItemRange(int start, int end) {
 
 
 // returns the cost of the given item per buff given, including the number used and the opportunity cost of using it
-int costPerBuffPercent(item itemToAnalyze, int buff, int useAmount, int opportunityCost) {
-	return ((historical_price(itemToAnalyze) * useAmount) + opportunityCost) / buff;
+int costPerBuffPercentage(item itemToAnalyze, int buffPercentage, int useAmount, int opportunityCost) {
+	return ((historical_price(itemToAnalyze) * useAmount) + opportunityCost) / buffPercentage;
 }
 
 
@@ -4536,13 +4866,15 @@ float estimateDropRate(item anItem) {
 
 // returns the meat value of all items (items only NOT MEAT) dropped by the given mob at the given item drop bonus
 // if something is not salable at the mall (determined by the mall price being equal to the min price) use the autosell price in the calculation instead
-int monsterItemMeatValue(monster mob, float bonusItemDrop) {
+int monsterItemMeatValue(monster mob, boolean conditionalDrops, float bonusItemDrop) {
 	if (mob == $monster[none]) return 0;
 	float bonusPP = 1.0 + numeric_modifier("Pickpocket Chance").to_float() / 100.0;
 	float bonusItem = (1.0 + (bonusItemDrop/100.0));
 
 	float totalMeatValue = 0;
 	foreach index, data in item_drops_array(mob) {
+		if (data.type == "c" && !conditionalDrops) continue;
+
 		float dropRate = min(1.0, (data.rate * bonusItem) / 100.0);
 		if (data.type == "p") dropRate = min(1.0, (data.rate * bonusPP) / 100.0);
 		if (data.type == "0") dropRate = (estimateDropRate(data.drop) * bonusItem); // no info available
@@ -4565,12 +4897,12 @@ int monsterItemMeatValue(monster mob, float bonusItemDrop) {
 	return totalMeatValue;
 }
 
-int monsterBaseItemMeatValue(monster mob) {
-	return monsterItemMeatValue(mob, 0);
+int monsterBaseItemMeatValue(monster mob, boolean conditionalDrops) {
+	return monsterItemMeatValue(mob, conditionalDrops, 0);
 }
 
-int monsterCurrentItemMeatValue(monster mob) {
-	return monsterItemMeatValue(mob, item_drop_modifier());
+int monsterCurrentItemMeatValue(monster mob, boolean conditionalDrops) {
+	return monsterItemMeatValue(mob, conditionalDrops, item_drop_modifier());
 }
 
 
@@ -4718,116 +5050,116 @@ void locationPPDetails(location aloc) {
 
 // returns the meat value dropped by the given mob at the given item and meat drop level
 // TODO doesn't consider pp'ing
-int monsterTotalMeatValue(monster mob, float bonusItemDrop, float bonusMeatDrop) {
+int monsterTotalMeatValue(monster mob, boolean conditionalDrops, float bonusItemDrop, float bonusMeatDrop) {
 // 	float meatDrop = meat_drop(mob) * (1 + bonusMeatDrop/100);
 // 	meatDrop += monsterItemMeatValue(mob, bonusItemDrop);
-	return monsterItemMeatValue(mob, bonusItemDrop) + monsterMeatDropValue(mob, bonusMeatDrop);
+	return monsterItemMeatValue(mob, conditionalDrops, bonusItemDrop) + monsterMeatDropValue(mob, bonusMeatDrop);
 }
 
-int monsterBaseTotalMeatValue(monster mob) {
-	return monsterTotalMeatValue(mob, 0.0, 0.0);
+int monsterBaseTotalMeatValue(monster mob, boolean conditionalDrops) {
+	return monsterTotalMeatValue(mob, conditionalDrops, 0.0, 0.0);
 }
 
-int monsterCurrentTotalMeatValue(monster mob) {
-	return monsterTotalMeatValue(mob, item_drop_modifier(), meat_drop_modifier());
+int monsterCurrentTotalMeatValue(monster mob, boolean conditionalDrops) {
+	return monsterTotalMeatValue(mob, conditionalDrops, item_drop_modifier(), meat_drop_modifier());
 }
 
 
 
 // returns the meat value dropped by the given location at the given item and meat drop level, pro-rated by appearance rate
-int locationMeatValue(location aLocation, float bonusItemDrop, float bonusMeatDrop) {
+int locationMeatValue(location aLocation, boolean conditionalDrops, float bonusItemDrop, float bonusMeatDrop) {
 	float meatDrop = 0.0;
 	foreach mob, rate in appearance_rates(aLocation) {
 		if (rate < 0.0)
 			rate = 0.0;
-		meatDrop += (rate / 100.0) * monsterTotalMeatValue(mob, bonusItemDrop, bonusMeatDrop);
+		meatDrop += (rate / 100.0) * monsterTotalMeatValue(mob, conditionalDrops, bonusItemDrop, bonusMeatDrop);
 	}
 	return meatDrop;
 }
 
-int locationBaseMeatValue(location aLocation) {
-	return locationMeatValue(aLocation, 0, 0);
+int locationBaseMeatValue(location aLocation, boolean conditionalDrops) {
+	return locationMeatValue(aLocation, conditionalDrops, 0, 0);
 }
 
-int locationCurrentMeatValue(location aLocation) {
-	return locationMeatValue(aLocation, item_drop_modifier(), meat_drop_modifier());
+int locationCurrentMeatValue(location aLocation, boolean conditionalDrops) {
+	return locationMeatValue(aLocation, conditionalDrops, item_drop_modifier(), meat_drop_modifier());
 }
 
 
 
-monster [] monsterEconomics(boolean doPrint) {
+monster [] monsterEconomics(boolean conditionalDrops, boolean doPrint) {
 	monster [int] allmons;
 	int idx;
 	foreach amon in $monsters[]
-		if (!amon.boss && amon.monsterCurrentTotalMeatValue() > 0)
+		if (!amon.boss && amon.monsterCurrentTotalMeatValue(conditionalDrops) > 0)
 			allmons[idx++] = amon;
-	sort allmons by -value.monsterCurrentTotalMeatValue();
+	sort allmons by -value.monsterCurrentTotalMeatValue(conditionalDrops);
 	if (doPrint)
 	    foreach i, amon in allmons
-			print(amon + " @ " + amon.monsterCurrentTotalMeatValue());
+			print(amon + " @ " + amon.monsterCurrentTotalMeatValue(conditionalDrops));
 	return allmons;
 }
 
-monster [] monsterEconomics() {
-	return monsterEconomics(true);
+monster [] monsterEconomics(boolean conditionalDrops) {
+	return monsterEconomics(conditionalDrops, true);
 }
 
 
-monster [] copyableMonsterEconomics(boolean doPrint) {
+monster [] copyableMonsterEconomics(boolean conditionalDrops, boolean doPrint) {
 	monster [int] allmons;
 	int idx;
 	foreach amon in $monsters[]
-		if (!amon.boss && amon.monsterCurrentTotalMeatValue() > 0 && isCopyable(amon))
+		if (!amon.boss && amon.monsterCurrentTotalMeatValue(conditionalDrops) > 0 && isCopyable(amon))
 			allmons[idx++] = amon;
-	sort allmons by -value.monsterCurrentTotalMeatValue();
+	sort allmons by -value.monsterCurrentTotalMeatValue(conditionalDrops);
 	if (doPrint)
 	    foreach i, amon in allmons
-			print(amon + " @ " + amon.monsterCurrentTotalMeatValue());
+			print(amon + " @ " + amon.monsterCurrentTotalMeatValue(conditionalDrops));
 	return allmons;
 }
 
-monster [] copyableMonsterEconomics() {
-	return copyableMonsterEconomics(true);
+monster [] copyableMonsterEconomics(boolean conditionalDrops) {
+	return copyableMonsterEconomics(conditionalDrops, true);
 }
 
 
 
 // returns the given locations sorted by each location's total meat value
-location [] locationEconomics(boolean [location] locations, float itemBonus, float meatBonus, boolean doPrint) {
+location [] locationEconomics(boolean [location] locations, boolean conditionalDrops, float itemBonus, float meatBonus, boolean doPrint) {
 	location [int] alllocs;
 	int idx;
 	foreach aloc in locations
-		if (isUnlocked(aloc) && aloc.locationMeatValue(itemBonus, meatBonus) > 0)
+		if (isUnlocked(aloc) && aloc.locationMeatValue(conditionalDrops, itemBonus, meatBonus) > 0)
 			alllocs[idx++] = aloc;
-	sort alllocs by -value.locationMeatValue(itemBonus, meatBonus);
+	sort alllocs by -value.locationMeatValue(conditionalDrops, itemBonus, meatBonus);
 	if (doPrint)
 	    foreach i, aloc in alllocs
-			print(aloc + " @ " + aloc.locationMeatValue(itemBonus, meatBonus));
+			print(aloc + " @ " + aloc.locationMeatValue(conditionalDrops, itemBonus, meatBonus));
 	return alllocs;
 }
 
-location [] locationBaseEconomics(boolean [location] locations, boolean doPrint) {
-	return locationEconomics(locations, 0, 0, doPrint);
+location [] locationBaseEconomics(boolean [location] locations, boolean conditionalDrops, boolean doPrint) {
+	return locationEconomics(locations, conditionalDrops, 0, 0, doPrint);
 }
 
-location [] locationBaseEconomics(boolean doPrint) {
-	return locationBaseEconomics($locations[], doPrint);
+location [] locationBaseEconomics(boolean conditionalDrops, boolean doPrint) {
+	return locationBaseEconomics($locations[], conditionalDrops, doPrint);
 }
 
-location [] locationBaseEconomics() {
-	return locationBaseEconomics(true);
+location [] locationBaseEconomics(boolean conditionalDrops) {
+	return locationBaseEconomics(conditionalDrops, true);
 }
 
-location [] locationCurrentEconomics(boolean [location] locations, boolean doPrint) {
-	return locationEconomics(locations, item_drop_modifier(), meat_drop_modifier(), doPrint);
+location [] locationCurrentEconomics(boolean [location] locations, boolean conditionalDrops, boolean doPrint) {
+	return locationEconomics(locations, conditionalDrops, item_drop_modifier(), meat_drop_modifier(), doPrint);
 }
 
-location [] locationCurrentEconomics(boolean doPrint) {
-	return locationCurrentEconomics($locations[], doPrint);
+location [] locationCurrentEconomics(boolean conditionalDrops, boolean doPrint) {
+	return locationCurrentEconomics($locations[], conditionalDrops, doPrint);
 }
 
-location [] locationCurrentEconomics() {
-	return locationCurrentEconomics(true);
+location [] locationCurrentEconomics(boolean conditionalDrops) {
+	return locationCurrentEconomics(conditionalDrops, true);
 }
 
 
@@ -4848,7 +5180,7 @@ location [] shadowEconomics(boolean shouldPrint) {
 		$location[Shadow Rift (The Nearby Plains)] : true,
 		$location[Shadow Rift (The Right Side of the Tracks)] : true,
 	};
-	return locationEconomics(shadowLocs, item_drop_modifier() / 5, meat_drop_modifier() / 5, shouldPrint);
+	return locationEconomics(shadowLocs, false, item_drop_modifier() / 5, meat_drop_modifier() / 5, shouldPrint);
 }
 
 location [] shadowEconomics() {
@@ -4908,6 +5240,19 @@ float chanceOfSausageGoblinNextTurn() {
 }
 
 
+// aborts if we encounter a sausage goblin
+boolean wantToGrindSausageGoblin() {
+	if (!inRonin() && kCheckForLastSausageGoblinKey.get_property().to_boolean()) {
+// 		print("turns since last sausage goblin: " + turnsSinceSausageGoblin() + ", chance of encounter: " + chanceOfSausageGoblinNextTurn() + "%");
+		if (last_monster() == $monster[sausage goblin] && get_property("_backUpUses").to_int() < 11
+			&& get_property("_sausageFights").to_float() >= (kSausagesToGet * (1.0/2.0))) // when we grind, we can encounter non-combats, so we want to wait until we've burned our largest +item buffs before grinding sausage goblins since they don't require a lot of +item
+			return true;
+	}
+	return false;
+}
+
+
+// aborts if we encounter a sausage goblin
 void checkForLastSausageGoblin() {
 	if (!inRonin() && get_property(kCheckForLastSausageGoblinKey).to_boolean()) {
 // 		print("turns since last sausage goblin: " + turnsSinceSausageGoblin() + ", chance of encounter: " + chanceOfSausageGoblinNextTurn() + "%");
@@ -4919,15 +5264,87 @@ void checkForLastSausageGoblin() {
 
 
 
-int breatheWater() {
-	int breathWaterFor = max(have_effect($effect[Really Deep Breath]), have_effect($effect[Oxygenated Blood]));
+boolean isUnderwaterLocation(location aLocation) {
+	switch (aLocation) {
+		case $location[The Briny Deeps]:
+		case $location[The Brinier Deepers]:
+		case $location[The Briniest Deepests]:
+		case $location[An Octopus's Garden]:
+		case $location[The Wreck of the Edgar Fitzsimmons]:
+		case $location[The Mer-Kin Outpost]:
+		case $location[Anemone Mine]:
+		case $location[The Marinara Trench]:
+		case $location[The Dive Bar]:
+		case $location[Madness Reef]:
+		case $location[The Coral Corral]:
+		case $location[The Skate Park]:
+		case $location[The Caliginous Abyss]:
+		case $location[Mer-kin Elementary School]:
+		case $location[Mer-kin Library]:
+		case $location[Mer-kin Gymnasium]:
+		case $location[Mer-kin Colosseum]:
+			return true;
+			break;
+	}
+
+	return false;
+}
+
+int breatheWaterEffectTurns() {
+	int breathWaterFor;
+	breathWaterFor = max(breathWaterFor, have_effect($effect[Really Deep Breath]));
+	breathWaterFor = max(breathWaterFor, have_effect($effect[Oxygenated Blood]));
 	breathWaterFor = max(breathWaterFor, have_effect($effect[Pneumatic]));
 	breathWaterFor = max(breathWaterFor, have_effect($effect[Driving Waterproofly]));
-	return max(breathWaterFor, have_effect($effect[Pumped Stomach]));
+	breathWaterFor = max(breathWaterFor, have_effect($effect[Pumped Stomach]));
+	breathWaterFor = max(breathWaterFor, have_effect($effect[Mer-kinny Flavor]));
+	breathWaterFor = max(breathWaterFor, have_effect($effect[Hyperoxygenated Blood]));
+
+	return breathWaterFor;
+}
+
+int breatheWaterTurns() {
+    if (equipped_amount($item[crappy Mer-kin mask]) > 0
+        || equipped_amount($item[Mer-kin gladiator mask]) > 0
+        || equipped_amount($item[Mer-kin scholar mask]) > 0
+        || equipped_amount($item[aerated diving helmet]) > 0
+        || equipped_amount($item[old SCUBA tank]) > 0
+        || equipped_amount($item[oxygenated eggnog helmet]) > 0
+        || equipped_amount($item[The Crown of Ed the Undying]) > 0
+        || equipped_amount($item[Elf Guard SCUBA tank]) > 0) {
+        return kMaxInt;
+    }
+	return breatheWaterEffectTurns();
 }
 
 boolean canBreatheWater() {
-	return breatheWater() > 0;
+	return breatheWaterTurns() > 0;
+}
+
+
+boolean canMyFamiliarBreatheWater() {
+	switch (my_familiar()) {
+		case $familiar[Barrrnacle]:
+		case $familiar[Emo Squid]:
+		case $familiar[Cuddlefish]:
+		case $familiar[Imitation Crab]:
+		case $familiar[Magic Dragonfish]:
+		case $familiar[Midget Clownfish]:
+		case $familiar[Rock Lobster]:
+		case $familiar[Urchin Urchin]:
+		case $familiar[Grouper Groupie]:
+		case $familiar[Squamous Gibberer]:
+		case $familiar[Dancing Frog]:
+		case $familiar[Reagnimated Gnome]:
+		case $familiar[Adorable Space Buddy]:
+		case $familiar[Space Jellyfish]:
+		case $familiar[Robortender]:
+		case $familiar[God Lobster]:
+		case $familiar[Red-nosed Snapper]:
+			return true;
+	}
+
+	return breatheWaterEffectTurns() > 0;
 }
 
 
@@ -5285,12 +5702,14 @@ string cliStringToConsume(int quantity, item itemToConsume) {
 
 
 
-// returns true iff the fullness and inebriety of checkMe are less than the available fullness and inebriety limits
+// returns true iff the fullness, inebriety, and spleen of checkMe are less than the available fullness, inebriety, and spleen limits
 boolean haveRoom(item checkMe) {
 	if (checkMe.fullness > fullnessRoom())
 		return false;
 	if (checkMe.inebriety > inebrietyRoom())
 		return false;
+    if (checkMe.spleen > spleenRoom())
+        return false;
 	return true;
 }
 
@@ -5334,6 +5753,23 @@ boolean consumeIfNeeded(item itemToConsume, effect anEffect, int minimumNumberOf
 	return executed;
 }
 
+// consume any item, one at a time, to achieve minimumNumberOfTurns of its effect
+boolean consumeIfNeeded(item itemToConsume, int minimumNumberOfTurns) {
+    boolean executed = true;
+    effect anEffect = effect_modifier(itemToConsume, "Effect");
+	print("looks like effect of " + itemToConsume + " is " + anEffect);
+    while (have_effect(anEffect) < minimumNumberOfTurns && executed) {
+        int beforeEffect = have_effect(anEffect);
+        executed = consume(1, itemToConsume);
+        int afterEffect = have_effect(anEffect);
+        if (beforeEffect == afterEffect) {
+            print("consumeIfNeeded: not getting " + anEffect + " from " + itemToConsume + "!", "red");
+            executed = false;
+        }
+    }
+    return executed;
+}
+
 boolean use_if_needed(item itemToUse, effect anEffect, int minimumNumberOfTurns) {
 	return consumeIfNeeded(itemToUse, anEffect, minimumNumberOfTurns);
 }
@@ -5343,6 +5779,20 @@ boolean consumeIfNeededWithUneffect(item itemToConsume, effect anEffect, int min
 	if (to_skill(anEffect) != $skill[none] && !uneffectIfNeeded(to_skill(anEffect)))
 		abort("consumeIfNeededWithUneffect");
 	return consumeIfNeeded(itemToConsume, anEffect, minimumNumberOfTurns);
+}
+
+
+// consume each item in the array, one at a time, to achieve minimumNumberOfTurns of its effect
+// returns true if all items' effects were achieved to minimumNumberOfTurns, false otherwise.
+boolean consumeIfNeeded(item[] itemsToConsume, int minimumNumberOfTurns) {
+    boolean allExecuted = true;
+    foreach idx, itemToConsume in itemsToConsume {
+        boolean executed = consumeIfNeeded(itemToConsume, minimumNumberOfTurns);
+        if (!executed) {
+            allExecuted = false;
+        }
+    }
+    return allExecuted;
 }
 
 
@@ -5390,28 +5840,6 @@ boolean getEffectIfNeededWithUneffect(effect anEffect, item anItem, skill aSkill
 		return buffIfNeededWithUneffect(aSkill, minimumNumberOfTurns); // anEffect is only needed if we're using an item
 	else
 		return consumeIfNeededWithUneffect(anItem, anEffect, minimumNumberOfTurns);
-}
-
-
-
-// TODO make this use the same PrioritySkillRecord as everything else
-// might return a blank record if there are no free runaways to be had
-ActionRecord chooseFreeRunaway(int maxPerRunawayCost) {
-	ActionRecord theAction;
-
-	if (my_class() == $class[Accordion Thief] && have_item($item[fish-oil smoke bomb]))
-		theAction.itemToUse = $item[fish-oil smoke bomb];
-	else if (have_item($item[peppermint parasol])
-		&& maxPerRunawayCost >= (mall_price($item[peppermint parasol]) / 10)
-		&& to_int(get_property("parasolUsed")) < 3) // after 3, less than 100% chance
-		theAction.itemToUse = $item[peppermint parasol];
-
-	return theAction;
-}
-
-boolean canFreeRunaway(int maxPerRunawayCost) {
-	ActionRecord theAction = chooseFreeRunaway(maxPerRunawayCost);
-	return theAction.skillToUse != $skill[none] || theAction.itemToUse != $item[none];
 }
 
 
@@ -5466,8 +5894,8 @@ void buffColdRes(AnalyzeRecord [item] itemsToAnalyze, int buffTurnsNeeded, int m
 
 	// ACQUIRE AND CONSUME ITEMS
 	foreach idx, anItem in sortArray {
-		int costPerBuffPercent = costPerBuffPerTurn(anItem, itemsToAnalyze[anItem].buffAmount, itemsToAnalyze[anItem].duration, itemsToAnalyze[anItem].opportunityCost);
-		if (costPerBuffPercent <= maxMeatcostPerBuffTurn) {
+		int costPerBuffPerTurn = costPerBuffPerTurn(anItem, itemsToAnalyze[anItem].buffAmount, itemsToAnalyze[anItem].duration, itemsToAnalyze[anItem].opportunityCost);
+		if (costPerBuffPerTurn <= maxMeatcostPerBuffTurn) {
 			int amt = ceil(buffTurnsNeeded.to_float() / itemsToAnalyze[anItem].duration);
 			if (fullAcquire(anItem, amt) < amt) {
 				abort("could not acquire consumable: " + anItem);
@@ -5539,9 +5967,9 @@ void coldResBuff(AnalyzeRecord [item] coldResItemsToAnalyze, int buffTurnsNeeded
 			+ available_amount(theItem) + "</td><td>"
 			+ coldResBuffMakeClickableCommand(activate1String, coldResItemsToAnalyze[theItem].activationString == "" ? theItem.to_string() : activate1String) + "</td><td>"
 			+ mall_price(theItem) + "</td><td>"
-			+ have_effect(coldResItemsToAnalyze[theItem].theEffect)+ "</td><td>" 
-			+ coldResItemsToAnalyze[theItem].buffAmount + (coldResItemsToAnalyze[theItem].buffIsPercentBased ? "%" : "") + "</td><td>" 
-			+ coldResItemsToAnalyze[theItem].duration + "</td><td>" + coldResItemsToAnalyze[theItem].theEffect+ "</td><td>" 
+			+ have_effect(coldResItemsToAnalyze[theItem].theEffect)+ "</td><td>"
+			+ coldResItemsToAnalyze[theItem].buffAmount + (coldResItemsToAnalyze[theItem].buffIsPercentBased ? "%" : "") + "</td><td>"
+			+ coldResItemsToAnalyze[theItem].duration + "</td><td>" + coldResItemsToAnalyze[theItem].theEffect+ "</td><td>"
 			+ costPerBuffTurn + "</td><td>"
 			+ coldResBuffMakeClickableCommand(activateAllString, numberNeeded.to_string()) + "</td><td>"
 			+ (numberNeeded > 0 ? coldResBuffMakeClickableCommand(activateAllLessOneString, to_string(numberNeeded - 1)) : "") + "</td></tr>\n";
@@ -5558,7 +5986,7 @@ void coldResBuff(AnalyzeRecord [item] coldResItemsToAnalyze, int buffTurnsNeeded
 // 		+ (buffCurrentlyOn + newBuffs) + ", total cost per buff: " + (totalCost / (buffCurrentlyOn + newBuffs))
 // 		+ " meat\nTOTAL COST: " + totalCost, 60000, false))
 // 		abort("user aborted");
-// 
+//
 // 	// ACQUIRE AND CONSUME ITEMS
 // 	foreach theItem, amount in itemsNeeded {
 // 		int numberNeeded = ceil(amount.to_float() / coldResItemsToAnalyze[theItem].duration);
@@ -5586,6 +6014,241 @@ void autoColdResBuff(AnalyzeRecord [item] coldResItemsToAnalyze) {
 		abort("no existing cold res buffs, use coldResBuff(int buffTurnsNeeded)");
 	int averageEffect = totalTurnsForAverage / effectsForAverage;
 	coldResBuff(coldResItemsToAnalyze, averageEffect);
+}
+
+
+
+// sorted by cost/turn/weight buffed
+float [item] potionsThatBuffFamWt(boolean shouldPrint) {
+	item [int] sortArray;
+	int ctr;
+	float [item] rval;
+
+	// marshal the data
+	foreach idx, it in allPotions() {
+		effect potEff = effect_modifier(it, "effect");
+		if (potEff.numeric_modifier("Familiar Weight") > 0.0) {
+			sortArray[ctr++] = it;
+		}
+	}
+
+	sort sortArray by -(value.current_historical_price() / value.numeric_modifier("Effect Duration") / value.effect_modifier("effect").numeric_modifier("Familiar Weight"));
+
+	foreach idx, it in sortArray {
+		effect potEff = it.effect_modifier("effect");
+		float duration = it.numeric_modifier("Effect Duration");
+		int weightBuff = potEff.numeric_modifier("Familiar Weight");
+		float price = it.current_historical_price();
+		float costPerTurnPerWeight = price / duration / weightBuff;
+		cprint(shouldPrint, it + ": " + potEff + "@" + price + " -- cost per turn per weight: " + costPerTurnPerWeight + " -- effect " + potEff + " modifiers: " + potEff.string_modifier("Modifiers"));
+		rval[it] = costPerTurnPerWeight;
+	}
+
+	return rval;
+}
+
+
+
+// returns a sorted list of consumables that buff the given modifier name
+// list is sorted by buff per meat per turn
+// does not consider untradeable items
+AnalyzeRecord [item] consumablesToAnalyze(string modifierName, boolean shouldPrint) {
+	AnalyzeRecord [item] rval, tempArray;
+	item [int] sortableItems;
+	int i;
+
+	foreach it in $items[] {
+		effect anEffect = effect_modifier(it, "Effect");
+		if (anEffect == $effect[none]) continue;
+		int buffAmount = numeric_modifier(anEffect, modifierName);
+
+		if ((it.isPotion() || it.isFood() || it.isBooze() || it.isSpleen()) && buffAmount > 0) {
+			int price = it.historical_price();
+			if (price == 0) continue;
+			int cost = it.opportunityCostToConsume();
+			int duration = numeric_modifier(it, "Effect Duration");
+			float rate = it.costPerBuffPerTurn(buffAmount, duration, cost);
+
+			tempArray[it] = new AnalyzeRecord(buffAmount, false, duration, cost, anEffect);
+			sortableItems[i++] = it;
+        }
+    }
+
+	sort sortableItems by tempArray[value].opportunityCost / (tempArray[value].buffAmount * tempArray[value].duration);
+
+	cprint(shouldPrint, modifierName + " buffs (orange means not currently enough room to consume):");
+	foreach idx, it in sortableItems {
+		effect anEffect = tempArray[it].theEffect;
+		int buffAmount = tempArray[it].buffAmount;
+		int price = it.historical_price();
+		int cost = tempArray[it].opportunityCost;
+		int duration = tempArray[it].duration;
+		float rate = it.costPerBuffPerTurn(buffAmount, duration, cost);
+
+		string colour = "green", consumeString = "";
+		if (!haveRoom(it)) colour = "orange";
+		if (it.isFood()) consumeString = " (and stomach " + it.fullness + ")";
+		if (it.isBooze()) consumeString = " (and liver " + it.inebriety + ")";
+		if (it.isSpleen()) consumeString = " (and spleen " + it.spleen + ")";
+		cprint(shouldPrint, it + " +" + buffAmount + " for " + duration + " turns@" + (price+cost) + " meat" + consumeString + " -- " + rate + " meat/buff/turns", colour);
+
+		rval[it] = new AnalyzeRecord(buffAmount, false, duration, cost, anEffect);
+    }
+
+	return rval;
+}
+
+AnalyzeRecord [item] consumablesToAnalyze(string modifierName) {
+    return consumablesToAnalyze(modifierName, true);
+}
+
+
+
+string consumableBuffMakeClickableCommand(string command, string title) {
+	return "<strong style=\"color:blue;\"><a href=\"KoLmafia/sideCommand?cmd=" + command.url_encode() + "&pwd=" + my_hash() + "\">" + title + "</a></strong>";
+}
+
+// print a sorted list of consumables that we are interested in
+void printConsumableBuffs(AnalyzeRecord [item] consumablesToPrint, int buffTurnsNeeded) {
+	int buffCurrentlyOn;
+	int newBuffs;
+	int totalCost;
+	string htmlOutput = "<html><head><style>table, td {border:none; border-collapse:collapse; padding:0px;}; th {border:1px}</style></head><body>"
+		+ "<table><tr><th>Amount</th><th>Item (click to use 1)</th><th>Price</th><th>Opportunity Cost</th><th>current turns</th><th>buff amount</th><th>duration</th><th>effect</th><th>cost per buff turn</th><th># needed</th><th>one less</th></tr>\n";
+
+	// first, get the current state and calculate the items we need to maintain it for buffTurnsNeeded
+	int [item] itemsNeeded; // item to number of turns needed
+	foreach theItem, ar in consumablesToPrint {
+		int costPerBuffTurn = costPerBuffPerTurn(theItem, ar.buffAmount, min(ar.duration, buffTurnsNeeded), ar.opportunityCost);
+		effect theEffect = ar.theEffect;
+		string textColour = "#ADD8E6";
+		if (have_effect(theEffect) > 0) {
+			itemsNeeded[theItem] = buffTurnsNeeded - have_effect(theEffect);
+			buffCurrentlyOn += ar.buffAmount;
+			textColour = "#90ee90";
+		} else {
+			itemsNeeded[theItem] = buffTurnsNeeded;
+			newBuffs += ar.buffAmount;
+		}
+		int numberNeeded = max(ceil(itemsNeeded[theItem].to_float() / consumablesToPrint[theItem].duration), 0);
+		totalCost += numberNeeded * mall_price(theItem);
+
+		string activate1String = cliStringToConsume(1, theItem);
+		if (ar.activationString != "")
+			activate1String = to_string(1, ar.activationString);
+		string activateAllString = ar.activationString == "" ? cliStringToConsume(numberNeeded, theItem) : to_string(numberNeeded, consumablesToPrint[theItem].activationString);
+		string activateAllLessOneString = ar.activationString == "" ? cliStringToConsume(numberNeeded - 1, theItem) : to_string(numberNeeded - 1, consumablesToPrint[theItem].activationString);
+		htmlOutput += "<tr style='background-color: " + textColour + "'><td>"
+			+ available_amount(theItem) + "</td><td>"
+			+ consumableBuffMakeClickableCommand(activate1String, ar.activationString == "" ? theItem.to_string() : activate1String) + "</td><td>"
+			+ mall_price(theItem) + "</td><td>"
+			+ ar.opportunityCost + "</td><td>"
+			+ have_effect(ar.theEffect) + "</td><td>"
+			+ ar.buffAmount + (ar.buffIsPercentBased ? "%" : "") + "</td><td>"
+			+ ar.duration + "</td><td>" + ar.theEffect+ "</td><td>"
+			+ costPerBuffTurn + "</td><td>"
+			+ consumableBuffMakeClickableCommand(activateAllString, numberNeeded.to_string()) + "</td><td>"
+			+ (numberNeeded > 0 ? consumableBuffMakeClickableCommand(activateAllLessOneString, to_string(numberNeeded - 1)) : "") + "</td></tr>\n";
+	}
+
+	htmlOutput += "</table></body></html>\n";
+	print_html(htmlOutput);
+	print_html("<html></html>"); // clears screen thrash from my seemingly well-formed HTML
+}
+
+
+void showConsumableBuffs(string modifierName, int buffTurnsNeeded, int maxCostPerBuffPerTurn) {
+	AnalyzeRecord [item] consumablesToPrint;
+	AnalyzeRecord [item] consumablesToAnalyze = consumablesToAnalyze(modifierName, false);
+
+	// we have to resort the array because we limit duration to buffTurnsNeeded or less, which affects the cost per buff per turn
+	item [int] sortArray;
+	int idx = 0;
+	foreach it in consumablesToAnalyze
+		sortArray[idx++] = it;
+	sort sortArray by costPerBuffPerTurn(value, consumablesToAnalyze[value].buffAmount, min(consumablesToAnalyze[value].duration, buffTurnsNeeded), consumablesToAnalyze[value].opportunityCost);
+	foreach idx, it in sortArray
+		consumablesToPrint[it] = consumablesToAnalyze[it];
+
+	printConsumableBuffs(consumablesToPrint, buffTurnsNeeded);
+}
+
+
+// given a list of consumables we're interested in consuming and the number of turns we need to buff for, returns the cost of purchasing all the needed consumables.
+int consumablesCost(AnalyzeRecord [item] consumablesToAnalyze, int buffTurnsNeeded) {
+	int totalCost = 0;
+	foreach it, ar in consumablesToAnalyze {
+		effect anEffect = effect_modifier(it, "Effect");
+		int numberNeeded = max(ceil((buffTurnsNeeded.to_float() - have_effect(anEffect)) / ar.duration), 0);
+		totalCost += numberNeeded * mall_price(it);
+	}
+	return totalCost;
+}
+
+
+// given a list of consumables and the number of turns we need their buffs for and a maximum cost per buff per turn,
+// return a list of consumables that cost less than maxCostPerBuffPerTurn sorted by cost per buff per turn
+AnalyzeRecord [item] consumablesBuffToApply(AnalyzeRecord [item] consumablesToAnalyze, int buffTurnsNeeded, int maxCostPerBuffPerTurn) {
+	AnalyzeRecord [item] rval;
+	item [int] sortArray;
+	int idx = 0;
+
+	foreach it in consumablesToAnalyze
+		sortArray[idx++] = it;
+
+	sort sortArray by costPerBuffPerTurn(value, consumablesToAnalyze[value].buffAmount, min(consumablesToAnalyze[value].duration, buffTurnsNeeded), consumablesToAnalyze[value].opportunityCost);
+
+	foreach i, theItem in sortArray {
+		AnalyzeRecord ar = consumablesToAnalyze[theItem];
+		int costPerBuffTurn = costPerBuffPerTurn(theItem, ar.buffAmount, min(ar.duration, buffTurnsNeeded), ar.opportunityCost);
+		if (costPerBuffTurn <= maxCostPerBuffPerTurn) {
+			rval[theItem] = ar;
+		}
+	}
+
+	return rval;
+}
+
+
+// determine how long we should be buffing for by looking at the list of our currently active buffs which affect the modifier we're interested in and selecting the longest
+// ignores any effect with a number of turns over 900 as those are likely only limited by MP
+int determineBuffDuration(string modifierName) {
+    int longestEffect = 0;
+    foreach anEffect, effectDuration in my_effects() {
+        if (numeric_modifier(anEffect, modifierName) > 0) {
+            if (effectDuration > 0 && effectDuration <= 900) {
+                if (effectDuration > longestEffect) {
+                    longestEffect = effectDuration;
+                }
+            }
+        }
+    }
+    return longestEffect;
+}
+
+
+boolean applyConsumablesBuff(string modifierName, int buffDuration, int maxCostPerBuffPerTurn) {
+	AnalyzeRecord [item] consumables = consumablesToAnalyze(modifierName, false);
+	AnalyzeRecord [item] consumablesBuffToApply = consumablesBuffToApply(consumables, buffDuration, maxCostPerBuffPerTurn);
+
+	int totalCost = consumablesCost(consumablesBuffToApply, buffDuration);
+	print("Consumables that buff " + modifierName + ", planning to buff for " + buffDuration + " turns at a cost of " + maxCostPerBuffPerTurn + " meat maximum per buff per turn, total cost: " + totalCost + " or " + (totalCost / buffDuration) + "/turn");
+	if (!user_confirm("Do you want to proceed applying the listed buffs at a cost of " + totalCost + "?", 60000, true)) {
+		print("Operation cancelled by user.", "red");
+		return false;
+	}
+
+	int i;
+	item[int] buffitList;
+	foreach it, ar in consumablesBuffToApply
+		buffitList[i++] = it;
+
+	return consumeIfNeeded(buffitList, buffDuration);
+}
+
+boolean autoConsumablesBuff(string modifierName, int maxCostPerBuffPerTurn) {
+	int buffDuration = max(1, determineBuffDuration(modifierName));
+	return applyConsumablesBuff(modifierName, buffDuration, maxCostPerBuffPerTurn);
 }
 
 
@@ -5983,13 +6646,19 @@ int roboEconomicsForLocation(location roboLo) {
 
 
 boolean canAugustSkill(int day) {
-	int augSkillsCast = "_augSkillsCast".get_property().to_int();
 	boolean augSkillCast = ("_aug" + day + "Cast").get_property().to_boolean();
-	if (augSkillsCast >= 5) {
-		print("wanted to cast Aug " + day + " but we're already at 5 casts!", "red");
-		wait(5);
-	}
-	return augSkillsCast < 5 && !augSkillCast;
+	int augSkillsCast = "_augSkillsCast".get_property().to_int();
+	boolean augTodayCast = "_augTodayCast".get_property().to_boolean();
+    int todaysDate = today_to_string().substring(6).to_int();
+    assert(todaysDate > 0 && todaysDate < 32, "canAugustSkill: didn't get today's date!");
+
+	return (augSkillsCast < 5 && !augSkillCast) || (todaysDate == day && !augTodayCast);
+}
+
+
+
+boolean freePillKeeperUsed() {
+	return "_freePillKeeperUsed".get_property().to_boolean();
 }
 
 
@@ -6004,10 +6673,13 @@ item nextLuckyToUse() {
 	item lowestCostItem;
 	int lowestCostItemCost = kMaxInt;
 
-	if (!get_property("_freePillKeeperUsed").to_boolean())
+    if (have_item($item[Apriling band saxophone]) && "_aprilBandSaxophoneUses".get_property().to_int() < 3)
+        return $item[Apriling band saxophone];
+
+	if (!freePillKeeperUsed())
 		return $item[Eight Days a Week Pill Keeper];
 
-	if (!"_aug2Cast".get_property().to_boolean())
+	if (canAugustSkill(2))
 		return $item[august scepter];
 
 	int speakeasyCost = (3 * 6 * kTurnValue) + 500;
@@ -6035,15 +6707,23 @@ item nextLuckyToUse() {
 int nextLuckyCost() {
 	item nextLuck = nextLuckyToUse();
 
+	if (nextLuck == $item[Apriling band saxophone])
+		return 0;
+
 	if (nextLuck == $item[Eight Days a Week Pill Keeper])
-		return ("_freePillKeeperUsed".get_property().to_boolean() ? (3 * kTurnsPerSpleen * kTurnValue) : 0);
+		return (freePillKeeperUsed() ? (3 * kTurnsPerSpleen * kTurnValue) : 0);
 
 	if (nextLuck == $item[august scepter])
-		return ("_aug2Cast".get_property().to_boolean() ? kMaxInt : 0);
+		return (canAugustSkill(2) ? 0 : kMaxInt);
 
 	return current_price(nextLuck);
 }
 
+
+// can we get lucky for the given cost
+boolean canGetLucky(int cost) {
+    return nextLuckyCost() <= cost;
+}
 
 // get lucky by whatever means necessary
 boolean getLucky() {
@@ -6051,6 +6731,9 @@ boolean getLucky() {
 		return true;
 
 	item nextLuck = nextLuckyToUse();
+
+    if (nextLuck == $item[Apriling band saxophone])
+        return cli_execute("apriling lucky");
 
 	if (nextLuck == $item[Eight Days a Week Pill Keeper])
 		return cli_execute("pillkeeper lucky");
@@ -6244,25 +6927,25 @@ int [monster] hugpocketenomics() {
 }
 
 
-int familiarMeatValue(familiar afam, item famEq, monster amon) {
+int familiarMeatValue(familiar afam, item famEq, monster amon, boolean conditionalDrops) {
 	int famItemBonus = numeric_modifier(afam, "Item Drop", familarWeight(afam), famEq);
 	int famMeatBonus = numeric_modifier(afam, "Meat Drop", familarWeight(afam), famEq);
 
-	return amon.monsterTotalMeatValue(famItemBonus, famMeatBonus) - amon.monsterBaseTotalMeatValue();
+	return amon.monsterTotalMeatValue(conditionalDrops, famItemBonus, famMeatBonus) - amon.monsterBaseTotalMeatValue(conditionalDrops);
 }
 
 
 // returns the meat gain for the given monster
 // includes: +item/+meat familiars, robortender
-int [familiar, item] familiarMeatValue(monster amon, boolean doPrint) {
+int [familiar, item] familiarMeatValue(monster amon, boolean conditionalDrops, boolean doPrint) {
 	int [familiar, item] rval;
 
-	rval[$familiar[Robortender], $item[toggle switch (Bartend)]] = familiarMeatValue($familiar[Robortender], $item[ toggle switch (Bartend)], amon) + roboEconomicsForMonster(amon, false);
-	rval[$familiar[Trick-or-Treating Tot], $item[li'l ninja costume]] = familiarMeatValue($familiar[Trick-or-Treating Tot], $item[li'l ninja costume], amon);
-	rval[$familiar[Trick-or-Treating Tot], $item[li'l pirate costume]] = familiarMeatValue($familiar[Trick-or-Treating Tot], $item[li'l pirate costume], amon);
-	rval[$familiar[Cat Burglar], $item[burglar/sleep mask]] = familiarMeatValue($familiar[Cat Burglar], $item[burglar/sleep mask], amon);
-	rval[$familiar[XO Skeleton], $item[exo-xo-skeleton-skeleton]] = familiarMeatValue($familiar[XO Skeleton], $item[exo-xo-skeleton-skeleton], amon);
-	rval[$familiar[Hobo Monkey], $item[tiny bindle]] = familiarMeatValue($familiar[Hobo Monkey], $item[tiny bindle], amon);
+	rval[$familiar[Robortender], $item[toggle switch (Bartend)]] = familiarMeatValue($familiar[Robortender], $item[toggle switch (Bartend)], amon, conditionalDrops) + roboEconomicsForMonster(amon, false);
+	rval[$familiar[Trick-or-Treating Tot], $item[li'l ninja costume]] = familiarMeatValue($familiar[Trick-or-Treating Tot], $item[li'l ninja costume], amon, conditionalDrops);
+	rval[$familiar[Trick-or-Treating Tot], $item[li'l pirate costume]] = familiarMeatValue($familiar[Trick-or-Treating Tot], $item[li'l pirate costume], amon, conditionalDrops);
+	rval[$familiar[Cat Burglar], $item[burglar/sleep mask]] = familiarMeatValue($familiar[Cat Burglar], $item[burglar/sleep mask], amon, conditionalDrops);
+	rval[$familiar[XO Skeleton], $item[exo-xo-skeleton-skeleton]] = familiarMeatValue($familiar[XO Skeleton], $item[exo-xo-skeleton-skeleton], amon, conditionalDrops);
+	rval[$familiar[Hobo Monkey], $item[tiny bindle]] = familiarMeatValue($familiar[Hobo Monkey], $item[tiny bindle], amon, conditionalDrops);
 
 	if (doPrint)
 		foreach afam, it, meatVal in rval
@@ -6271,14 +6954,102 @@ int [familiar, item] familiarMeatValue(monster amon, boolean doPrint) {
 	return rval;
 }
 
-int [familiar, item] familiarMeatValue(monster amon) {
-	return familiarMeatValue(amon, true);
+int [familiar, item] familiarMeatValue(monster amon, boolean conditionalDrops) {
+	return familiarMeatValue(amon, conditionalDrops, true);
+}
+
+
+
+int effectiveGingerbreadCityTurns() {
+	int base = to_int(get_property("_gingerbreadCityTurns"));
+	int clockAdvance = 0;
+	if (to_boolean(get_property("_gingerbreadClockAdvanced"))) clockAdvance = 5;
+	return base + clockAdvance;
+}
+
+
+int [int, string] gingerbreadLeaderboard() {
+	string page = visit_url("/place.php?whichplace=gingerbreadcity&action=gc_leaderboard", false);
+	matcher leaderboardMatcher = create_matcher("<tr><td><b><a class=nounder href=showplayer.php\\?who=[0-9]+>(.+?)</a></b></td><td></td><td>([0-9,]+) sprinkles</td></tr>", page);
+	int [int, string] rval;
+	int i = 1; // first place is 1
+	while (find(leaderboardMatcher)) {
+		string leaderName = group(leaderboardMatcher, 1);
+		int leaderAmount = to_int(group(leaderboardMatcher, 2));
+        rval[i++, leaderName] = leaderAmount;
+	}
+
+    assert(isValidTop10List(rval), "didn't get a valid gingerbread leaderboard");
+    return rval;
+}
+
+void printGingerbreadLeaderboard() {
+    int [int, string] leaderboard = gingerbreadLeaderboard();
+    printTop10List(leaderboard);
+}
+
+
+
+int [monster] parseFantasyRealmMonstersKilled() {
+	int [monster] rval;
+	string [int, int] parser = group_string(get_property("_frMonstersKilled"), ",?([^:]+):(\\d+)");
+	foreach i in parser {
+		monster aMonster = to_monster(parser[i][1]);
+		int aKillCount = to_int(parser[i][2]);
+		rval[aMonster] = aKillCount;
+		//print("found monster: " + aMonster + ", killed: " + aKillCount);
+	}
+	return rval;
+}
+
+
+
+// map location to monster for fantasy realm zones (or any zone with 1 monster really)
+monster zoneMonster(location aloc) {
+	float [monster] zonemons = appearance_rates(aloc);
+	foreach amon, rate in zonemons
+		if (rate > 0)
+			return amon;
+	assert(false, "all FR zones should have a monster!");
+	return $monster[none];
+}
+
+
+
+int frHoursNeeded(string [] locStrings) {
+	int hoursNeeded = count(locStrings) + 1;
+	int hoursLeft = get_property("_frHoursLeft") == "" ? 5 : get_property("_frHoursLeft").to_int();
+	string unlockString;
+
+	foreach idx, aloc in locStrings {
+		unlockString += aloc;
+		if (get_property("_frAreasUnlocked").contains_text(aloc))
+			hoursNeeded--;
+	}
+
+	return hoursNeeded;
+}
+
+// TODO fixme
+void frEnsureHoursNeeded(string [] locStrings) {
+	return;
+// 	int hoursLeft = get_property("_frHoursLeft") == "" ? 5 : get_property("_frHoursLeft").to_int();
+// 	assert(hoursLeft >= frHoursNeeded(locStrings), "FantasyRealm: not enough HOURS left");
+}
+
+
+// if a location is unlocked, add 5 - number of zone monsters killed
+// if a location is not unlocked, add 5 for the locked zone, plus 5 for the (unknown) zone that unlocks it
+void frEnsureTurnsNeeded(string [] locStrings) {
+	assert(my_adventures() >= (frHoursNeeded(locStrings) * 6) + 1, "FantasyRealm: not enough TURNS left");
 }
 
 
 
 // uses the briefcase to get anEffect until anEffect has minimumNumberOfTurns
 boolean briefcase_if_needed(effect anEffect, int minimumNumberOfTurns) {
+	return true;
+
 	string [effect] BriefcaseEffectsMap = {
 		$effect[A View to Some Meat] : "meat",
 		$effect[Items Are Forever] : "item",
@@ -6929,7 +7700,7 @@ int pocketProfessorLecturesAvailable() {
 	return max(0, pocketProfessorLectures() - to_int(get_property("_pocketProfessorLectures")));
 }
 
-// uses the results of a simulated maximize to see the potential 
+// uses the results of a simulated maximize to see the potential
 int pocketProfessorLecturesPossiblyAvailable() {
 	int base = familiar_weight($familiar[Pocket Professor]);
 	int adj = numeric_modifier("Generated:_spec", "Familiar Weight");
@@ -7036,11 +7807,11 @@ monster [] timespinnerRecentFightEconomics(boolean doPrint) {
 		rval[idx++] = amon;
 	}
 
-	sort rval by -value.monsterCurrentTotalMeatValue();
+	sort rval by -value.monsterCurrentTotalMeatValue(false);
 
 	if (doPrint)
 		foreach i, amon in rval
-			print("[" + amon.to_int() + "]" + amon + " @ " + amon.monsterCurrentTotalMeatValue());
+			print("[" + amon.to_int() + "]" + amon + " @ " + amon.monsterCurrentTotalMeatValue(false));
 
 	return rval;
 }
@@ -7266,13 +8037,13 @@ monster [int] combatLoversLocketonomics(boolean doPrint) {
 	foreach amon in allMons {
 		sortableMons[idx++] = amon;
 	}
-	sort sortableMons by -value.monsterCurrentTotalMeatValue();
+	sort sortableMons by -value.monsterCurrentTotalMeatValue(false);
 
 	if (doPrint)
 		print("value of each combat lover's locket reminiscence at current +item/+meat: +" + item_drop_modifier().to_string("%.1f") + "% / +" + meat_drop_modifier().to_string("%.1f") + "%");
 
 	foreach ind, amon in sortableMons {
-		int monMeat = monsterCurrentTotalMeatValue(amon);
+		int monMeat = amon.monsterCurrentTotalMeatValue(false);
 		if (doPrint)
 			print(amon + ": " + monMeat);
 	}
@@ -7300,7 +8071,7 @@ void sendAutumnaton() {
 			boolean [location] testArray;
 			foreach idx2, aloc in kAutumnatonUpgradeLocations[upgrade]
 				testArray[aloc] = true;
-			orderedArray = locationBaseEconomics(testArray, true);
+			orderedArray = locationBaseEconomics(testArray, false, true);
 			break;
 		}
 	}
@@ -7440,7 +8211,7 @@ item [int] cargoCultistShortsPocketItems() {
 			409 : $item[Yeg's Motel ashtray],
 			322 : $item[Yeg's Motel disposable razor],
 			130 : $item[Yeg's Motel stationery],
-	
+
 			381 : $item[chocolate seal-clubbing club],
 			477 : $item[chocolate turtle totem],
 			654 : $item[chocolate pasta spoon],
@@ -7727,106 +8498,106 @@ int bestCargoPocket() {
 
 // group = -1 for all
 boolean [item] iRefuseItems(int group) {
-	item [] kIRefuseGroup1 = {$item[barbed-wire fence], 
-		$item[bat guano], 
-		$item[batgut], 
-		$item[big rock], 
-		$item[briefcase], 
-		$item[cog], 
-		$item[dead guy's piece of double-sided tape], 
-		$item[empty meat tank], 
-		$item[fat stacks of cash], 
-		$item[ghuol egg], 
-		$item[gnoll teeth], 
-		$item[hemp string], 
-		$item[hermit permit], 
-		$item[ice-cold fotie], 
-		$item[ice-cold sir schlitz], 
-		$item[ice-cold six-pack], 
-		$item[ice-cold Willer], 
-		$item[lihc eye], 
-		$item[loose teeth], 
-		$item[meat from yesterday], 
-		$item[pretty flower], 
-		$item[rat appendix], 
-		$item[rusty metal ring], 
-		$item[rusty metal shaft], 
-		$item[skeleton bone], 
-		$item[skewer], 
-		$item[spring], 
-		$item[sprocket], 
-		$item[ten-leaf clover], 
-		$item[uncooked chorizo], 
-		$item[valuable trinket], 
-		$item[worthless gewgaw], 
-		$item[worthless knick-knack], 
+	item [] kIRefuseGroup1 = {$item[barbed-wire fence],
+		$item[bat guano],
+		$item[batgut],
+		$item[big rock],
+		$item[briefcase],
+		$item[cog],
+		$item[dead guy's piece of double-sided tape],
+		$item[empty meat tank],
+		$item[fat stacks of cash],
+		$item[ghuol egg],
+		$item[gnoll teeth],
+		$item[hemp string],
+		$item[hermit permit],
+		$item[ice-cold fotie],
+		$item[ice-cold sir schlitz],
+		$item[ice-cold six-pack],
+		$item[ice-cold Willer],
+		$item[lihc eye],
+		$item[loose teeth],
+		$item[meat from yesterday],
+		$item[pretty flower],
+		$item[rat appendix],
+		$item[rusty metal ring],
+		$item[rusty metal shaft],
+		$item[skeleton bone],
+		$item[skewer],
+		$item[spring],
+		$item[sprocket],
+		$item[ten-leaf clover],
+		$item[uncooked chorizo],
+		$item[valuable trinket],
+		$item[worthless gewgaw],
+		$item[worthless knick-knack],
 		$item[worthless trinket]};
-	item [] kIRefuseGroup2 = {$item[asbestos crossbow string], 
-		$item[asbestos stick], 
-		$item[asbestos sword hilt], 
-		$item[beer lens], 
-		$item[bloody clown pants], 
-		$item[box], 
-		$item[cast], 
-		$item[catgut], 
-		$item[chrome crossbow string], 
-		$item[chrome stick], 
-		$item[chrome sword hilt], 
-		$item[dead guy's watch], 
-		$item[disease], 
-		$item[enormous belt buckle], 
-		$item[flaming crutch], 
-		$item[hippopotamus skin], 
-		$item[leather mask], 
-		$item[linoleum crossbow string], 
-		$item[linoleum stick], 
-		$item[linoleum sword hilt], 
-		$item[Mad Train wine], 
-		$item[mesh cap], 
-		$item[mullet wig], 
-		$item[penguin skin], 
-		$item[pine-fresh air freshener], 
-		$item[pirate pelvis], 
-		$item[pr0n legs], 
-		$item[Ralph IX cognac], 
-		$item[razor-sharp can lid], 
-		$item[tenderizing hammer], 
-		$item[white lightning], 
-		$item[yak skin], 
+	item [] kIRefuseGroup2 = {$item[asbestos crossbow string],
+		$item[asbestos stick],
+		$item[asbestos sword hilt],
+		$item[beer lens],
+		$item[bloody clown pants],
+		$item[box],
+		$item[cast],
+		$item[catgut],
+		$item[chrome crossbow string],
+		$item[chrome stick],
+		$item[chrome sword hilt],
+		$item[dead guy's watch],
+		$item[disease],
+		$item[enormous belt buckle],
+		$item[flaming crutch],
+		$item[hippopotamus skin],
+		$item[leather mask],
+		$item[linoleum crossbow string],
+		$item[linoleum stick],
+		$item[linoleum sword hilt],
+		$item[Mad Train wine],
+		$item[mesh cap],
+		$item[mullet wig],
+		$item[penguin skin],
+		$item[pine-fresh air freshener],
+		$item[pirate pelvis],
+		$item[pr0n legs],
+		$item[Ralph IX cognac],
+		$item[razor-sharp can lid],
+		$item[tenderizing hammer],
+		$item[white lightning],
+		$item[yak skin],
 		$item[yeti fur]};
-	item [] kIRefuseGroup3 = {$item[alphabet gum], 
-		$item[blood flower], 
-		$item[broken skull], 
-		$item[dirty hobo gloves], 
-		$item[disturbing fanfic], 
-		$item[felt], 
-		$item[filthy hippy poncho], 
-		$item[filthy poultice], 
-		$item[foon], 
-		$item[fruitcake], 
-		$item[furry pants], 
-		$item[gob of wet hair], 
-		$item[googly eye], 
-		$item[lead necklace], 
-		$item[length of string], 
-		$item[lovecat tail], 
-		$item[mob penguin cellular phone], 
-		$item[old coin purse], 
-		$item[old leather wallet], 
-		$item[picture of a dead guy's girlfriend], 
-		$item[pine tar], 
-		$item[plastic passion fruit], 
-		$item[[2108]rock], 
-		$item[sleaze nuggets], 
-		$item[spiked femur], 
-		$item[squashed frog], 
-		$item[stench powder], 
-		$item[stick], 
-		$item[stringy sinew], 
-		$item[stuffing], 
-		$item[tasket], 
-		$item[tooth], 
-		$item[urinal cake], 
+	item [] kIRefuseGroup3 = {$item[alphabet gum],
+		$item[blood flower],
+		$item[broken skull],
+		$item[dirty hobo gloves],
+		$item[disturbing fanfic],
+		$item[felt],
+		$item[filthy hippy poncho],
+		$item[filthy poultice],
+		$item[foon],
+		$item[fruitcake],
+		$item[furry pants],
+		$item[gob of wet hair],
+		$item[googly eye],
+		$item[lead necklace],
+		$item[length of string],
+		$item[lovecat tail],
+		$item[mob penguin cellular phone],
+		$item[old coin purse],
+		$item[old leather wallet],
+		$item[picture of a dead guy's girlfriend],
+		$item[pine tar],
+		$item[plastic passion fruit],
+		$item[[2108]rock],
+		$item[sleaze nuggets],
+		$item[spiked femur],
+		$item[squashed frog],
+		$item[stench powder],
+		$item[stick],
+		$item[stringy sinew],
+		$item[stuffing],
+		$item[tasket],
+		$item[tooth],
+		$item[urinal cake],
 		$item[wooden block]};
 
 	boolean [item] rval;
@@ -7881,6 +8652,8 @@ string sweetSynthesisHelper(item candyA, item candyB) {
 		checkIfRunningOut(candyA, 100);
 		checkIfRunningOut(candyB, 100);
 	}
+
+    assert(available_amount(candyA) > 0 && available_amount(candyB) > 0, "not enough candy to synth!");
 	return "synthesize " + candyA + ", " + candyB;
 }
 
@@ -7890,12 +8663,14 @@ void sweetSynthesis(effect buff, int minimumNumberOfTurns) {
 		return;
 	}
 
-	if (buff == $effect[Synthesis: Collection])
-		cli_execute_if_needed(sweetSynthesisHelper($item[frostbite-flavored Hob-O], $item[Everlasting Deckswabber]), buff, minimumNumberOfTurns);
-	else if (buff == $effect[Synthesis: Greed])
-		cli_execute_if_needed(sweetSynthesisHelper($item[children of the candy corn], $item[Comet Drop]), buff, minimumNumberOfTurns);
-	else if (buff == $effect[Synthesis: Smart])
-		cli_execute_if_needed(sweetSynthesisHelper($item[Daffy Taffy], $item[candy stake]), buff, minimumNumberOfTurns);
+//	if (buff == $effect[Synthesis: Collection])
+//		cli_execute_if_needed(sweetSynthesisHelper($item[frostbite-flavored Hob-O], $item[Everlasting Deckswabber]), buff, minimumNumberOfTurns);
+//	else if (buff == $effect[Synthesis: Greed])
+///		cli_execute_if_needed(sweetSynthesisHelper($item[children of the candy corn], $item[Comet Drop]), buff, minimumNumberOfTurns);
+//	else if (buff == $effect[Synthesis: Smart])
+//		cli_execute_if_needed(sweetSynthesisHelper($item[Daffy Taffy], $item[candy stake]), buff, minimumNumberOfTurns);
+
+	cli_execute_if_needed("synthesize " + buff, buff, minimumNumberOfTurns);
 }
 
 
@@ -7910,28 +8685,23 @@ void setParkaMode(string modeString) {
 
 
 // #Oliver's Place #milk-eyed sot #milky-eyed sot
+// returns $location[none] if the quest is done, get's the quest if it isn't started
 location sotsQuestLocation() {
-	string sotsQuestString = kSotsQuestLocationKey.get_property();
-	if (sotsQuestString == "-1") return $location[none];
+    assert(!"_sotParcelReturned".get_property().to_boolean(), "sotsQuestLocation: milk-eyed sot's parcel already returned");
+
+    // check the cached value
+	string sotsQuestString = "_sotParcelLocation".get_property();
+	assert(sotsQuestString != "-1", "milk-eyed sot's quest location not found (-1)");
 	location sotsQuestLocation = sotsQuestString.to_location();
-	if (sotsQuestLocation != $location[none]) return sotsQuestLocation;
+    if (sotsQuestLocation != $location[none]) return sotsQuestLocation;
 
+    // looks like we haven't got the quest yet, let's get it
 	string pageString = visit_url("/place.php?whichplace=speakeasy&action=olivers_sot", false, false);
-	matcher questMatcher;
 
-	if (pageString.contains_text("He's a little hard to parse, baby"))
-		questMatcher = create_matcher("He's a little hard to parse, baby. What he means is that he lost something over in (.*?) and he'd like you to get it for him", pageString);
-	else if (pageString.contains_text("He's just sitting there"))
-		questMatcher = create_matcher("He's just sitting there, waiting for you to bring his package back from (.*?)\\.", pageString);
-
-	if (find(questMatcher)) {
-		sotsQuestString = group(questMatcher, 1);
-		sotsQuestLocation = sotsQuestString.to_location();
-		kSotsQuestLocationKey.set_property(sotsQuestLocation);
-		return sotsQuestLocation;
-	}
-
-	return $location[none];
+	sotsQuestString = "_sotParcelLocation".get_property();
+	sotsQuestLocation = sotsQuestString.to_location();
+	assert(sotsQuestString != "-1", "milk-eyed sot's quest location not found (-1)");
+	return sotsQuestLocation;
 }
 
 
@@ -7940,6 +8710,20 @@ int spikolodonSpikesUsed() {
 	return "_spikolodonSpikeUses".get_property().to_int();
 }
 
+int spikolodonSpikesAvailable() {
+	return 5 - spikolodonSpikesUsed();
+}
+
+
+// returns the number of times (0-3) the Mayam Calendar is available to use
+int mayamCalendarUsesAvailable() {
+	int usesAvailable = 3;
+    if ("_mayamSymbolsUsed".get_property().contains_text("yam4")) usesAvailable--;
+    if ("_mayamSymbolsUsed".get_property().contains_text("clock")) usesAvailable--;
+    if ("_mayamSymbolsUsed".get_property().contains_text("explosion")) usesAvailable--;
+
+	return usesAvailable;
+}
 
 
 int cinchUsed() {
@@ -7960,6 +8744,11 @@ boolean readyCinch(int minCinch) {
 	}
 
 	return (100 - cinchUsed()) >= minCinch;
+}
+
+
+int cinchCurrentlyAvailable() {
+	return 100 - cinchUsed();
 }
 
 
@@ -8010,6 +8799,81 @@ void drinkStillsuitDistillate() {
 
 
 
+int aprilBandTubaUses() {
+	return "_aprilBandTubaUses".get_property().to_int();
+}
+
+int aprilBandTubaUsesAvailable() {
+	return 3 - aprilBandTubaUses();
+}
+
+
+
+int mcHugeLargeAvalancheUses() {
+	return "_mcHugeLargeAvalancheUses".get_property().to_int();
+}
+
+int mcHugeLargeAvalancheUsesAvailable() {
+	return 3 - mcHugeLargeAvalancheUses();
+}
+
+
+
+// -------------------------------------
+// CAMPGROUND UTILS
+// -------------------------------------
+
+void printCampground() {
+	foreach anItem, amt in get_campground() {
+		print(anItem + ": " + amt);
+	}
+}
+
+boolean haveCampgroundItem(item checkItem) {
+	foreach anItem, amt in get_campground() {
+		if (anItem == checkItem) return true;
+	}
+	return false;
+}
+
+
+int freeRestsAvailableNow() {
+	return (have_skill($skill[Adventurer of Leisure]) ? 2 : 0)
+		+ (have_skill($skill[Disco Nap]) ? 1 : 0)
+		+ "_mayamRests".get_property().to_int()
+		+ (haveCampgroundItem($item[forest canopy bed]) ? 5 : 0)
+		+ (have_item($item[Cincho de Mayo]) ? 3 : 0)
+		+ (have_item($item[mother's necklace]) ? 5 : 0)
+		+ (have_skill($skill[Long Winter's Nap]) ? 5 : 0)
+		+ (have_skill($skill[Executive Narcolepsy]) ? 1 : 0)
+		+ ("getawayCampsiteUnlocked".get_property().to_boolean() ? 1 : 0)
+		+ (have_skill($skill[Elf Guard Relaxation Techniques]) ? 3 : 0);
+}
+
+// 
+int freeRestsPossible() {
+	return freeRestsAvailableNow()
+		+ ((!"_mayamSymbolsUsed".get_property().contains_text("chair") && mayamCalendarUsesAvailable() >= 1) ? 5 : 0) // use the Mayam Calendar with the chair icon in the outer ring
+		+ spleenRoom(); // use spleen item Nightmare Fuel
+}
+
+
+
+
+// returns the amount of cinch that would be regenerated by rests rests
+int cinchForRests(int rests) {
+	return (rests <= 5) ? (30 * rests) : 
+		   (rests <= 9) ? (150 + 25 * (rests - 5)) : 
+						  (220 + 5 * (rests - 9));
+}
+
+
+// returns the total possible cinch we could have if we used all FREE rests that are available now (doesn't consider future possible free rests)
+int cinchPossibleWithFreeRests() {
+	return cinchCurrentlyAvailable() + cinchForRests(freeRestsAvailableNow());
+}
+
+
 
 // -------------------------------------
 // BANISH UTILITIES
@@ -8017,7 +8881,7 @@ void drinkStillsuitDistillate() {
 
 int [skill] banishSkillMapData() {
 	int [skill] banishSkillMap = {
-		$skill[Batter Up!] : kMaxInt,
+		$skill[Batter Up!] : kIndefiniteBanish,
 		$skill[KGB tranquilizer dart] : 20,
 		$skill[Throw Latte on Opponent] : 30,
 		$skill[Reflex Hammer] : 30,
@@ -8028,6 +8892,7 @@ int [skill] banishSkillMapData() {
 		$skill[Breathe Out] : 20,
 		$skill[Bowl a Curveball] : cosmicBowlingBallDuration(),
 		$skill[%fn\, Release the Patriotic Screech!] : 100,
+		$skill[Spring Kick] : kIndefiniteBanish,
 	};
 
 	return banishSkillMap;
@@ -8199,6 +9064,8 @@ int unbanishedNonTargets(location aLocation, monster [] someTargets) {
 // returns the status of all banishes in an array
 // a banish will be "available" if it is castable/usable, AND either availableWhenInUse is true or the banish is not
 // currently being used in the given location (or in any location if location is 'none')
+// set availableWhenInUse to false when you want to ensure your banishes are not overwritten
+// set availableWhenInUse to true when you are changing locations and all banishes are available to use even if they are being used elsewhere
 PrioritySkillRecord [int] banishSkillData(boolean availableWhenInUse, location aLocation, int maxPerTurnCost) {
 	PrioritySkillRecord tempBSR;
 	boolean isInCombat = inCombat();
@@ -8245,18 +9112,16 @@ PrioritySkillRecord [int] banishSkillData(boolean availableWhenInUse, location a
 	tempBSR.isAvailableNow = costIsGood && have_skill($skill[Breathe Out]) && (availableWhenInUse || !using_banish($skill[Breathe Out], aLocation)) && !isGingerbreadCityLoc;
 	bsrArray[i++] = tempBSR;
 
-
-	// Patriotic Eagle
+	// Patriotic Eagle TODO this is a skill added by a familiar, so it doesn't fit in .theItem
 	tempBSR = new PrioritySkillRecord();
 	tempBSR.theSkill = $skill[%fn\, Release the Patriotic Screech!];
-	tempBSR.theItem = $item[none];
+	tempBSR.theItem = $item[none]; // eww this is a familiar skill
 	tempBSR.meatCost = kTurnValue;
 	costIsGood = maxPerTurnCost >= (tempBSR.meatCost / banishedTurnsPerCast($skill[%fn\, Release the Patriotic Screech!]));
-	tempBSR.priority = (costIsGood ? lowCostPriority : highCostPriority) + 0.2;
+	tempBSR.priority = (costIsGood ? lowCostPriority : highCostPriority) + 0.3; // lower priority because it takes a bit to recharge and we don't generally want to use it unless we call for it explicitly
 	tempBSR.usesAvailable = "screechCombats".get_property().to_int() == 0 ? 1 : 0;
-	tempBSR.isAvailableNow = costIsGood && have_skill($skill[Breathe Out]) && (availableWhenInUse || !using_banish($skill[Breathe Out], aLocation)) && !isGingerbreadCityLoc;
+	tempBSR.isAvailableNow = costIsGood && have_skill($skill[%fn\, Release the Patriotic Screech!]) && (availableWhenInUse || !using_banish($skill[Breathe Out], aLocation)) && !isGingerbreadCityLoc;
 	bsrArray[i++] = tempBSR;
-
 
 	// Show them your ring
 	tempBSR = new PrioritySkillRecord();
@@ -8339,6 +9204,19 @@ PrioritySkillRecord [int] banishSkillData(boolean availableWhenInUse, location a
 	tempBSR.priority = basePriority + 0.4;
 	tempBSR.usesAvailable = 3 - to_int(get_property("_feelHatredUsed"));
 	tempBSR.isAvailableNow = availableWhenInUse || !using_banish($skill[Feel Hatred], aLocation) && !isGingerbreadCityLoc;
+	bsrArray[i++] = tempBSR;
+
+	// Spring Kick
+	tempBSR = new PrioritySkillRecord();
+	tempBSR.theSkill = $skill[Spring Kick];
+	tempBSR.theItem = $item[spring shoes];
+	tempBSR.meatCost = kTurnValue;
+	costIsGood = maxPerTurnCost >= (tempBSR.meatCost / banishedTurnsPerCast($skill[Spring Kick]));
+	tempBSR.priority = (costIsGood ? lowCostPriority : highCostPriority);
+	tempBSR.usesAvailable = kUnlimitedUses;
+	tempBSR.isAvailableNow = (equipped_amount($item[spring shoes]) > 0 || (!isInCombat && canEquipWithExistingAutomatedDressup($item[spring shoes])))
+		&& (availableWhenInUse || !using_banish($skill[Spring Kick], aLocation))
+		&& !isGingerbreadCityLoc;
 	bsrArray[i++] = tempBSR;
 
 
@@ -8432,6 +9310,61 @@ PrioritySkillRecord banishToUse(location aLocation, int maxPerTurnCost) {
 
 PrioritySkillRecord banishToUse(location aLocation) {
 	return banishToUse(aLocation, 0);
+}
+
+
+
+// -------------------------------------
+// FREE RUNAWAY UTILITIES
+// -------------------------------------
+
+// returns the status of all monster replacers
+PriorityRecord [int] freeRunawaySkillData() {
+	boolean isInCombat = inCombat();
+	PriorityRecord tempPR;
+	int basePriority = 3;
+	PriorityRecord [int] prArray;
+	int i = 0;
+
+	// Spring Away
+	tempPR = new PriorityRecord();
+	tempPR.customCombatString = "skill Spring Away;";
+	tempPR.maximizeString = "equip spring shoes";
+	tempPR.meatCost = 0;
+	tempPR.priority = basePriority - 0.5;
+	tempPR.usesAvailable = kUnlimitedUses;
+	tempPR.isAvailableNow = (equipped_amount($item[spring shoes]) > 0 || (!isInCombat && canEquipWithExistingAutomatedDressup($item[spring shoes])))
+	    && have_effect($effect[Everything Looks Green]) == 0;
+	prArray[i++] = tempPR;
+
+	return prArray;
+}
+
+PriorityRecord chooseFreeRunawaySkill() {
+	PriorityRecord [int] excludedSkills;
+	return skillToUse(freeRunawaySkillData(), $location[none], kMaxInt, excludedSkills);
+}
+
+
+
+// TODO make this use the same PrioritySkillRecord as everything else
+// might return a blank record if there are no free runaways to be had
+ActionRecord chooseFreeRunaway(int maxPerRunawayCost) {
+	ActionRecord theAction;
+
+	if (my_class() == $class[Accordion Thief] && have_item($item[fish-oil smoke bomb]))
+		theAction.itemToUse = $item[fish-oil smoke bomb];
+	else if (have_item($item[peppermint parasol])
+		&& maxPerRunawayCost >= (mall_price($item[peppermint parasol]) / 10)
+		&& to_int(get_property("parasolUsed")) < 3) // after 3, less than 100% chance
+		theAction.itemToUse = $item[peppermint parasol];
+
+	return theAction;
+}
+
+boolean canFreeRunaway(int maxPerRunawayCost) {
+	ActionRecord theAction = chooseFreeRunaway(maxPerRunawayCost);
+	return theAction.skillToUse != $skill[none] || theAction.itemToUse != $item[none];
 }
 
 
@@ -8532,11 +9465,21 @@ PrioritySkillRecord [int] instaKillSkillData() { // #free kill #freekill
 	tempPSR.isAvailableNow = true;
 	psrArray[i++] = tempPSR;
 
+	// Everfull Dart Holster
+	tempPSR = new PrioritySkillRecord();
+	tempPSR.theSkill = $skill[Darts: Aim for the Bullseye];
+	//tempPSR.theSkill = $skill[[7521]Darts: Aim for the Bullseye];
+	tempPSR.theItem = $item[Everfull Dart Holster];
+	tempPSR.priority = basePriority - 1; // high priority because we have many free uses
+	tempPSR.usesAvailable = kMaxInt;
+	tempPSR.isAvailableNow = equipped_amount($item[Everfull Dart Holster]) >= 1 && have_effect($effect[Everything Looks Red]) == 0;
+	psrArray[i++] = tempPSR;
+
 	// Free for all
 	tempPSR = new PrioritySkillRecord();
 	tempPSR.theSkill = $skill[Free-for-all];
 	tempPSR.theItem = $item[none];
-	tempPSR.priority = basePriority - 1;
+	tempPSR.priority = basePriority - 2; // free built-in skill
 	tempPSR.usesAvailable = kMaxInt;
 	tempPSR.isAvailableNow = my_class() == $class[Pig Skinner] && have_effect($effect[Everything Looks Red]) == 0;
 	psrArray[i++] = tempPSR;
@@ -8592,6 +9535,16 @@ AdventureRecord [int] freeCombatData() {
 
 	if (!"_molehillMountainUsed".get_property().to_boolean())
 		arArray[idx++] = new AdventureRecord($location[none], $skill[none], $item[none], "grindMolehillMountain");
+
+	if (canAugustSkill(8))
+		arArray[idx++] = new AdventureRecord($location[none], $skill[Aug. 8th: Cat Day!], $item[none], "grindCatDay");
+	if (canAugustSkill(22))
+		arArray[idx++] = new AdventureRecord($location[none], $skill[Aug. 22nd: Tooth Fairy Day!], $item[none], "grindToothFairy");
+
+    if ("_aprilBandTomUses".get_property().to_int() < 3 && available_amount($item[Apriling band quad tom]) > 0) {
+        for i from 1 to 3 - "_aprilBandTomUses".get_property().to_int()
+    		arArray[idx++] = new AdventureRecord($location[none], $skill[none], $item[Apriling band quad tom], "burnNextAprilingBandQuadTom");
+    }
 
 	// seal clubber fights
 // 	if (my_class() == $class[seal clubber]) {
@@ -8742,17 +9695,170 @@ boolean canDisintegrate() {
 
 
 // -------------------------------------
+// SNEAK UTILITIES -- free force non-combats noncombats NCs
+// -------------------------------------
+
+// returns the status of all sneak skills in an array
+PriorityRecord [int] sneakSkillData() {
+	PriorityRecord [int] prArray;
+	PriorityRecord tempPR;
+
+	boolean isInCombat = inCombat();
+	int basePriority = 3;
+	int i = 0;
+
+	// Cincho de Mayo
+	tempPR = new PriorityRecord("cast Cincho: Fiesta Exit", "", "");
+	tempPR.mpCost = 0;
+	tempPR.meatCost = 0;
+	tempPR.duration = 0;
+	tempPR.priority = basePriority;
+	tempPR.usesAvailable = cinchPossibleWithFreeRests() / 60;
+	tempPR.isAvailableNow = "_cinchUsed".get_property().to_int() < 40 && !isInCombat; // it's a buff (i.e. noncombat) skill
+	prArray[i++] = tempPR;
+
+	// Sneakisol -- Eight Days a Week Pill Keeper
+	tempPR = new PriorityRecord("pillkeeper noncombat", "", "");
+	tempPR.mpCost = 0;
+	tempPR.meatCost = freePillKeeperUsed() ? spleenValue() * 3 : 0;
+	tempPR.duration = 0;
+	tempPR.priority = basePriority + (freePillKeeperUsed() ? 2 : 0);
+	tempPR.usesAvailable = spleenRoom() / 3 + (freePillKeeperUsed() ? 0 : 1);
+	tempPR.isAvailableNow = (!freePillKeeperUsed() || spleenRoom() >= 3) && !isInCombat; // it's a buff (i.e. noncombat) skill
+	prArray[i++] = tempPR;
+
+	// stench jelly
+	tempPR = new PriorityRecord("chew stench jelly", "", "");
+	tempPR.mpCost = 0;
+	tempPR.meatCost = acquireCost($item[stench jelly]) + spleenValue();
+	tempPR.duration = 0;
+	tempPR.priority = basePriority + 2;
+	tempPR.usesAvailable = spleenRoom();
+	tempPR.isAvailableNow = spleenRoom() >= 1 && !isInCombat; // it's a buff (i.e. noncombat) skill
+	prArray[i++] = tempPR;
+
+	// Apriling band tuba
+	tempPR = new PriorityRecord("aprilband play tuba", "", "");
+	tempPR.mpCost = 0;
+	tempPR.meatCost = 0;
+	tempPR.duration = 0;
+	tempPR.priority = basePriority;
+	tempPR.usesAvailable = aprilBandTubaUsesAvailable();
+	tempPR.isAvailableNow = !isInCombat; // it's a buff (i.e. noncombat) skill
+	prArray[i++] = tempPR;
+
+	// McHugeLarge left ski
+	tempPR = new PriorityRecord("", "skill McHugeLarge Avalanche", "equip McHugeLarge left ski");
+	tempPR.mpCost = 0;
+	tempPR.meatCost = 0;
+	tempPR.duration = 0;
+	tempPR.priority = basePriority;
+	tempPR.usesAvailable = mcHugeLargeAvalancheUsesAvailable();
+	tempPR.isAvailableNow = equipped_amount($item[McHugeLarge left ski]) > 0 || !isInCombat; // have to cast it in combat
+	prArray[i++] = tempPR;
+
+	// Jurassic Parka -- spikolodon tab
+	tempPR = new PriorityRecord("", "skill Launch spikolodon spikes", "equip Jurassic Parka");
+	tempPR.mpCost = 0;
+	tempPR.meatCost = turnValue();
+	tempPR.duration = 0;
+	tempPR.priority = basePriority;
+	tempPR.usesAvailable = spikolodonSpikesAvailable();
+	tempPR.isAvailableNow = equipped_amount($item[Jurassic Parka]) > 0 || !isInCombat; // have to cast it in combat
+	prArray[i++] = tempPR;
+
+	return prArray;
+}
+
+
+PriorityRecord chooseSneakSkill(int maxPerTurnCost, PriorityRecord [] excludedSkills) {
+	return skillToUse(sneakSkillData(), $location[none], maxPerTurnCost, excludedSkills);
+}
+
+// maxCost is the max cost of the sneak
+PriorityRecord chooseSneakSkill(int maxCost) {
+	PriorityRecord [] excludedSkills;
+	return chooseSneakSkill(maxCost, excludedSkills);
+}
+
+
+int sneaksAvailable() {
+	return skillsAvailable(sneakSkillData());
+}
+
+boolean canSneak() {
+	return sneaksAvailable() > 0;
+}
+
+
+// TODO
+boolean currentlySneaking() {
+	assert(false, "unimplemented");
+	return true;
+}
+
+
+
+// -------------------------------------
 // POST ADVENTURE PRE ADVENTURE post-adventure pre-adventure
 // -------------------------------------
 
 
+// stow items that we don't want to be auto-used, or which need to be stowed in order to drop
+void stowItems() {
+	// put in storage items that get auto-used and which we don't want to be auto-used
+	put_closet(item_amount($item[funky junk key]), $item[funky junk key]);
+	put_closet(item_amount($item[bowling ball]), $item[bowling ball]); // in ronin as well??
+	put_closet(item_amount($item[twist of lime]), $item[twist of lime]);
+	put_closet(item_amount($item[Swizzler]), $item[Swizzler]);
+	put_closet(item_amount($item[thriftshop coupon]), $item[thriftshop coupon]);
+
+	// having none blocks the lucky gold ring from dropping them -- we want the lucky gold ring to drop better items
+	if (equipped_amount($item[lucky gold ring]) >= 1) {
+    	put_closet(item_amount($item[sand dollar]), $item[sand dollar]);
+    	put_closet(item_amount($item[hobo nickel]), $item[hobo nickel]);
+    }
+
+	// can't get the superlikely adventure if we have any in our inventory
+	put_closet(item_amount($item[Elf Farm Raffle ticket]), $item[Elf Farm Raffle ticket]);
+
+	// having none allows them to drop from the Boxing Daydream
+	put_closet(item_amount($item[bauxite beret]), $item[bauxite beret]);
+	put_closet(item_amount($item[bauxite boxers]), $item[bauxite boxers]);
+	put_closet(item_amount($item[bauxite bow-tie]), $item[bauxite bow-tie]);
+	put_closet(item_amount($item[My First Art of War]), $item[My First Art of War]);
+	put_closet(item_amount($item[Boxing Day Pass]), $item[Boxing Day Pass]);
+
+	// these get transformed by opening the dungeon
+	put_closet(item_amount($item[percent sign]), $item[percent sign]);
+	put_closet(item_amount($item[lowercase a]), $item[lowercase a]);
+	put_closet(item_amount($item[left parenthesis]), $item[left parenthesis]);
+	put_closet(item_amount($item[right parenthesis]), $item[right parenthesis]);
+	put_closet(item_amount($item[left bracket]), $item[left bracket]);
+	put_closet(item_amount($item[equal sign]), $item[equal sign]);
+	put_closet(item_amount($item[dollar sign]), $item[dollar sign]);
+
+    // having none allow them to be dropped in the mer-kin gym NC
+    put_closet(item_amount($item[Mer-kin dodgeball]), $item[Mer-kin dodgeball]);
+    put_closet(item_amount($item[Mer-kin dragnet]), $item[Mer-kin dragnet]);
+    put_closet(item_amount($item[Mer-kin headguard]), $item[Mer-kin headguard]);
+    put_closet(item_amount($item[Mer-kin switchblade]), $item[Mer-kin switchblade]);
+    put_closet(item_amount($item[Mer-kin thighguard]), $item[Mer-kin thighguard]);
+
+    // make sure we have a skeleton key so we can use it at The Skeleton Store's NC (ring of telling skeletons what to do is worth ~2k meat)
+    if (item_amount($item[skeleton key]) == 0)
+    	fullAcquire($item[skeleton key], 1, 100);
+}
+
+
+
 void preAdventureChecks(int checkTurns) {
+	assert(!inCombat(), "preAdventureChecks: called while we're in combat");
+	assert(my_adventures() > 0, "preAdventureChecks: called with no adventures");
+
 	print("preAdventureChecks: " + checkTurns + " turns in advance", "green");
 
-	if (my_adventures() == 0) abort("Out of adventures!");
-
 	check_counters(checkTurns, kAbortOnCounter);
-
 	burnExtraMP();
 // 	dressup(); // would be nice, but no way to get it
 
@@ -8800,11 +9906,15 @@ void preAdventureChecks(int checkTurns) {
 	if (isAsdonWorkshed())
 		ensureAsdonMartinFuel(150);
 
+    stowItems();
+
 	// GOALS
 	if (count(get_goals()) > 0)
 		set_property(kHadGoalsKey, "true");
 	else
 		set_property(kHadGoalsKey, "false");
+
+    print("preAdventureChecks: done", "green");
 }
 
 void preAdventureChecks() {
@@ -8883,35 +9993,7 @@ boolean postAdventure() {
 			setAgoraProgress(0);
 		}
 
-		// put in storage items that get auto-used and which we don't want to be auto-used
-		put_closet(item_amount($item[funky junk key]), $item[funky junk key]);
-		put_closet(item_amount($item[bowling ball]), $item[bowling ball]); // in ronin as well??
-		put_closet(item_amount($item[twist of lime]), $item[twist of lime]);
-		put_closet(item_amount($item[Swizzler]), $item[Swizzler]);
-		put_closet(item_amount($item[thriftshop coupon]), $item[thriftshop coupon]);
-
-		// having none blocks the lucky gold ring from dropping them
-		put_closet(item_amount($item[sand dollar]), $item[sand dollar]);
-		put_closet(item_amount($item[hobo nickel]), $item[hobo nickel]);
-
-		// can't get the superlikely adventure if we have any in our inventory
-		put_closet(item_amount($item[Elf Farm Raffle ticket]), $item[Elf Farm Raffle ticket]);
-
-		// having none allows them to drop from the Boxing Daydream
-		put_closet(item_amount($item[bauxite beret]), $item[bauxite beret]);
-		put_closet(item_amount($item[bauxite boxers]), $item[bauxite boxers]);
-		put_closet(item_amount($item[bauxite bow-tie]), $item[bauxite bow-tie]);
-		put_closet(item_amount($item[My First Art of War]), $item[My First Art of War]);
-		put_closet(item_amount($item[Boxing Day Pass]), $item[Boxing Day Pass]);
-
-		// these get transformed by opening the dungeon
-		put_closet(item_amount($item[percent sign]), $item[percent sign]);
-		put_closet(item_amount($item[lowercase a]), $item[lowercase a]);
-		put_closet(item_amount($item[left parenthesis]), $item[left parenthesis]);
-		put_closet(item_amount($item[right parenthesis]), $item[right parenthesis]);
-		put_closet(item_amount($item[left bracket]), $item[left bracket]);
-		put_closet(item_amount($item[equal sign]), $item[equal sign]);
-		put_closet(item_amount($item[dollar sign]), $item[dollar sign]);
+        stowItems();
 
 		// NUMBEROLOGY -- get +3 adv
 		if ("_universeCalculated".get_property().to_int() < 1) { // TODO number depends on number of times we got the Manual of Numberology
@@ -8956,12 +10038,11 @@ boolean postAdventure() {
 
 		// OLIVER'S PLACE milk caps need to be spent
 		if (have_item($item[milk cap]) || have_item($item[the Sot's parcel])) {
-			kSotsQuestLocationKey.set_property("-1");
 			if (have_item($item[the Sot's parcel])) {
 				visit_url("/place.php?whichplace=speakeasy&action=olivers_sot", false, false);
 				cli_execute("refresh inv");
 			}
-			buy($coinmaster[Fancy Dan the Cocktail Man], 1, $item[Mysterious Stranger]);
+			buy($coinmaster[Fancy Dan the Cocktail Man], 1, $item[Strong, Silent Type]);
 			assert(!have_item($item[milk cap]) && !have_item($item[the Sot's parcel]), "still have the milk cap!");
 		}
 
@@ -9003,8 +10084,6 @@ boolean postAdventure() {
 			newAcquire($item[yellow rocket], 1, 250);
 	}
 
-	checkForLastSausageGoblin();
-
 	// NOTICES TODO could add one for familiar minigame completion?
 	if (have_effect($effect[Everything Looks Yellow	]) == 0)
 		print("Yellow Ray is ready!", "red");
@@ -9041,13 +10120,21 @@ boolean postAdventure() {
 			print("have enough familiar sweat to drink but no room in our liver!", "red");
 	}
 
-	// GOALS and return value
+	// GOALS and return value: true iff we have satisfied our goals
+	boolean rval = false;
 	if (to_boolean(get_property(kHadGoalsKey)) && !haveGoals()) {
 		print("conditions have been satisfied!", "green");
 		set_property(kHadGoalsKey, "false");
-		return true;
-	} else
-		return false;
+		rval = true;
+	}
+
+    if (wantToGrindSausageGoblin()) {
+        print("grinding sausage goblin", "blue");
+    	checkForLastSausageGoblin();
+        // grindSausageGoblin();
+    }
+
+    return rval;
 }
 
 
@@ -9162,4 +10249,11 @@ string cllGetToFight(monster fightMon) {
 	return visit_url("/choice.php?whichchoice=1463&pwd&option=1&mid=" + fightMon.to_int(), true, false);
 }
 
-
+// Compatibility with scripts written before the restored Mac utility API.
+int amountAtRank(int rank, int [int, string] collection) { return amountAtRank(collection, rank); }
+string nameAtRank(int rank, int [int, string] collection) { return nameAtRank(collection, rank); }
+int monsterItemMeatValue(monster mob, float bonus) { return monsterItemMeatValue(mob, false, bonus); }
+int monsterCurrentItemMeatValue(monster mob) { return monsterCurrentItemMeatValue(mob, false); }
+int monsterTotalMeatValue(monster mob, float items, float meat) { return monsterTotalMeatValue(mob, false, items, meat); }
+int monsterCurrentTotalMeatValue(monster mob) { return monsterCurrentTotalMeatValue(mob, false); }
+int locationCurrentMeatValue(location loc) { return locationCurrentMeatValue(loc, false); }
