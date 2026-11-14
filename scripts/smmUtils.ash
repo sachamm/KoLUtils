@@ -1,4 +1,5 @@
 since r26249;
+import <smmResourcePlanner.ash>
 
 string __smm_utils_version = "1.0";
 
@@ -3216,6 +3217,8 @@ PrioritySkillRecord skillToUse(PrioritySkillRecord [] skillData, location aLocat
 	int lowestIntegerPriority = kMaxInt;
 	foreach idx in skillData {
 		psr = skillData[idx];
+		psr = new PrioritySkillRecord(psr.theSkill, psr.theItem, psr.mpCost, psr.meatCost,
+			psr.priority, smmRPAllowedSkillUses(psr.theSkill, psr.usesAvailable), psr.isAvailableNow);
 		if (arrayContains(excludedSkills, psr)) {
 			print("excluding " + psr.theSkill);
 			continue;
@@ -3271,7 +3274,7 @@ PrioritySkillRecord skillToUse(PrioritySkillRecord [] skillData, location aLocat
 	// choose one of the remaining and make sure we can use it
 	int i = 0;
 	while (i < count(setOfSkillsLowestPriority)) {
-		psr = setOfSkillsSameUses[i];
+		psr = setOfSkillsLowestPriority[i];
 		if (psr.theSkill == $skill[none] // no skill means we're prioritizing items that we don't have to equip, in which case, return the first one
 			|| psr.theItem == $item[none] || equipped_amount(psr.theItem) > 0 // otherwise, make sure we can equip the item
 			|| (!isInCombat && can_equip(psr.theItem) && canEquipWithExistingAutomatedDressup(psr.theItem)))
@@ -3298,11 +3301,12 @@ PrioritySkillRecord skillToUse(PrioritySkillRecord [] skillData, location aLocat
 int skillsAvailable(PrioritySkillRecord [] priorityData, int maxCost) {
 	int rval;
 	foreach idx, psr in priorityData {
+		int allowedUses = smmRPAllowedSkillUses(psr.theSkill, psr.usesAvailable);
 		if (psr.isAvailableNow && (maxCost >= psr.meatCost)) {
-			if (psr.usesAvailable == kUnlimitedUses)
+			if (allowedUses == kUnlimitedUses)
 				rval++;
 			else
-				rval += psr.usesAvailable;
+				rval += allowedUses;
 		}
 	}
 	return rval;
@@ -4471,6 +4475,31 @@ int undercutWithMinPrice(item itemToUndercut, int limit, int minPrice) {
 }
 
 
+int [int,string] smmMuseumCachedCollection(item it) {
+    int [int,string] ranks;
+    matcher cached=create_matcher("([0-9]+)\\. (.*?): ([0-9]+), ",get_property(kDCPropertyPrefix+it));
+    while (cached.find()) ranks[cached.group(1).to_int(),cached.group(2)]=cached.group(3).to_int();
+    if (!isValidTop10List(ranks)) clear(ranks);
+    return ranks;
+}
+
+// Do not sell copies already earmarked by the route, or the stock needed to
+// reach the acceptable top-ten milestone. A specific liquidation override is
+// explicit; no ranking request is hidden inside a store-heartbeat operation.
+int smmMuseumSaleQuantity(item it, int requested) {
+    if (requested<=0 || get_property("smm.IR.museum")=="false" || !is_displayable(it) || get_property("smm.IR.museumSell."+it.to_int())=="true") return requested;
+    int available=available_amount(it);
+    int protected=min(item_amount(it),max(0,get_property("smm.IR.museumHold."+it.to_int()).to_int()));
+    int [int,string] ranks=smmMuseumCachedCollection(it);
+    if (!isValidTop10List(ranks)) return 0;
+    int [int] others;
+    foreach rank, name, amount in ranks if (!isMe(name)) others[count(others)]=amount;
+    sort others by value;
+    int acceptable=count(others)>=10 ? others[count(others)-10]+1 : 1;
+    protected=max(protected,max(0,acceptable-display_amount(it)));
+    return min(requested,max(0,available-protected));
+}
+
 // stockAmount is the target stock amount, a zero stockAmount means stock all of theItem
 // saveAmount is the amount of items in all inventory locations (including the display case) to save
 boolean stockItem(int minPrice, int limit, int stockAmount, int saveAmount, item theItem) {
@@ -4494,6 +4523,8 @@ boolean stockItem(int minPrice, int limit, int stockAmount, int saveAmount, item
 	if (stockedAmount > 0 && price != shop_price(theItem) || limit != shop_limit(theItem)) {
 		reprice_shop(price, limit, theItem);
 	}
+
+    if (delta>0) delta=smmMuseumSaleQuantity(theItem,delta);
 
 	if (delta < 0) {
 		print("removing " + (-delta) + " of " + theItem + "@" + price, "blue");
@@ -4532,6 +4563,8 @@ boolean stockItem(int minPrice, int limit, int stockAmount, item theItem) {
 	if (price != shop_price(theItem) || limit != shop_limit(theItem)) {
 		reprice_shop(price, limit, theItem);
 	}
+
+    if (delta>0) delta=smmMuseumSaleQuantity(theItem,delta);
 
 	if (delta < 0) {
 		print("removing " + (-delta) + " of " + theItem + "@" + price, "blue");
