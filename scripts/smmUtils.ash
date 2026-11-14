@@ -913,11 +913,6 @@ int total_meat() {
 
 
 
-void refreshDietData() {
-}
-
-
-
 void refreshMallPrice(item it) {
 	assert(buy(it, 1, 1) == 0, "refreshMallPrice: we actually bought something for 1 meat??");
 }
@@ -2661,12 +2656,6 @@ void healAndRemoveDebuffsWithMPRestore(float hpFractionMin) {
 
 void healAndRemoveDebuffsWithMPRestore() {
 	healAndRemoveDebuffsWithMPRestore(gkDefaultHealPercent);
-}
-
-
-
-// TODO detect preferences for threshold to heal and amount to heal up to for both hp and mp
-void recoverHPandMP() {
 }
 
 
@@ -7929,7 +7918,7 @@ boolean [monster] cllMonstersFought(boolean shouldPrint) {
 	if (shouldPrint) print("monsters fought with the combat lover's locket:");
 	foreach idx, monString in monstersFought {
 		monster aMonster = monString.to_monster();
-		if (aMonster == $monster[none]) break; // most likely the empty string, i.e. no reminiscences
+		if (aMonster == $monster[none]) continue; // empty string (no reminiscences) or an unrecognized entry: skip it, keep the rest
 		rval[aMonster] = true;
 		if (shouldPrint) print(aMonster);
 	}
