@@ -3303,9 +3303,11 @@ int skillsAvailable(PrioritySkillRecord [] priorityData, int maxCost) {
 	foreach idx, psr in priorityData {
 		int allowedUses = smmRPAllowedSkillUses(psr.theSkill, psr.usesAvailable);
 		if (psr.isAvailableNow && (maxCost >= psr.meatCost)) {
-			if (allowedUses == kUnlimitedUses)
+			// some records use kMaxInt rather than kUnlimitedUses for "unlimited": count either as one
+			// so the total can't overflow, and never let a negative count subtract from it
+			if (allowedUses >= kUnlimitedUses)
 				rval++;
-			else
+			else if (allowedUses > 0)
 				rval += allowedUses;
 		}
 	}
@@ -4643,10 +4645,12 @@ boolean ensure_have_mats(item craftable, int needed) {
 	foreach mat, amt in get_ingredients(craftable) {
 		int avail = available_amount(mat);
 		int matPrice = current_historical_price(mat);
-		if (avail < needed) {
+		int required = amt * needed; // each craft takes amt of this ingredient
+		if (avail < required) {
 			if (matPrice > 0) {
 				print("buying mat: " + mat + " @ " + matPrice, "red");
-				if (fullAcquire(mat, needed - avail) + avail < needed)
+				// fullAcquire takes the total wanted on hand and returns how many of that total we now hold
+				if (fullAcquire(mat, required) < required)
 					return false;
 			} else
 				return false;
