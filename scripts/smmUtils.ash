@@ -4884,7 +4884,8 @@ int costPerBuffTurn(item itemToAnalyze, int buffLength, int buffTurnsNeeded, int
 
 float estimateDropRate(item anItem) {
 	float estimate = 5.0;
-	print("estimating " + estimate + "% drop rate for " + anItem, "orange");
+	// Silent by default; set smm.debugDropRates=true to see each fallback estimate.
+	if (get_property("smm.debugDropRates") == "true") print("estimating " + estimate + "% drop rate for " + anItem, "orange");
 	return 0.05;
 }
 
