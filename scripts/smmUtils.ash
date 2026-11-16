@@ -4210,10 +4210,10 @@ int [int, string] parseMuseumCollectionPage(string pageString) {
 }
 
 // ---------------------------------------------------------------- Museum ranking store
-// Museum requests are rationed (smm.IR.museumLookups a day, default 50), so every
-// answer is kept in data/smm-museum-ranks-<player id>.txt and reused until
-// "dc refresh" comes round to that item again (oldest first). All Museum
-// requests go through smmMuseumFetch so that one daily budget covers every script.
+// Every Museum answer is kept in data/smm-museum-ranks-<player id>.txt and
+// reused until "dc refresh" comes round to that item again (oldest first). All
+// Museum requests go through smmMuseumFetch, which counts them for reporting;
+// there is no daily limit.
 record SmmMuseumEntry {
 	int checked;   // when the Museum was asked, in seconds since 1970
 	int holders;   // players with at least one copy on display
@@ -4264,13 +4264,12 @@ boolean smmMuseumNobodyHas(item it) {
 	return smmMuseumStored(it) && smmMuseumStore[it.to_int()].holders == 0;
 }
 
-int smmMuseumLookupLimit() {
-	string limit = get_property("smm.IR.museumLookups");
-	return limit == "" ? 50 : max(0, limit.to_int());
-}
+// Museum requests made today, for reporting only: there is no daily limit.
 // The counter starts with "_", so Mafia clears it at rollover.
 int smmMuseumLookupsUsed() { return get_property("_smm.museumLookupsUsed").to_int(); }
-int smmMuseumLookupsLeft() { return max(0, smmMuseumLookupLimit() - smmMuseumLookupsUsed()); }
+// Kept for scripts that still ask; lookups are no longer limited.
+int smmMuseumLookupLimit() { return 1000000; }
+int smmMuseumLookupsLeft() { return 1000000; }
 
 // Reads a Museum item page. checked stays 0 when the page was not understood.
 SmmMuseumEntry smmMuseumParseEntry(string pageString) {
@@ -4301,12 +4300,12 @@ SmmMuseumEntry smmMuseumParseEntry(string pageString) {
 	return entry;
 }
 
-// One Museum request for one item, counted against today's budget. False when
-// the budget is spent or the page was not understood; the stored entry is then
+// One Museum request for one item, counted in today's total. False when the
+// page was not understood; the stored entry is then
 // left as it was. Re-reads the file before writing so that two scripts running
 // in turn do not drop each other's entries.
 boolean smmMuseumFetch(item it) {
-	if (it == $item[none] || smmMuseumLookupsLeft() < 1) return false;
+	if (it == $item[none]) return false;
 	set_property("_smm.museumLookupsUsed", smmMuseumLookupsUsed() + 1);
 	SmmMuseumEntry entry = smmMuseumParseEntry(visit_url("https://museum.loathers.net/item/" + it.to_int(), false, false));
 	if (entry.checked == 0) return false;
@@ -4321,17 +4320,16 @@ boolean smmMuseumFetch(item it) {
 // Returns a validated ranking list. Optional lookups return an empty map on failure;
 // an unavailable list must never be used to decide how many items to move or buy.
 // The stored ranking is used whatever its age; the Museum is asked only for an
-// item never seen before, and only while today's budget lasts.
+// item never seen before.
 int [int, string] lookupCollection(item anItem, boolean required) {
 	print("[" + anItem.to_int() + "]" + anItem + " @ " + current_price(anItem));
-	if (!smmMuseumStored(anItem) && smmMuseumLookupsLeft() > 0)
+	if (!smmMuseumStored(anItem))
 		smmMuseumFetch(anItem);
 	int [int, string] top10List = smmMuseumStoredList(anItem);
 
 	if (!isValidTop10List(top10List)) {
 		clear(top10List);
 		string why = smmMuseumNobodyHas(anItem) ? "Nobody has " + anItem + " on display; there is no ranking list"
-			: !smmMuseumStored(anItem) && smmMuseumLookupsLeft() < 1 ? "Today's Museum lookups are used up; no stored ranking for " + anItem
 			: "Top 10 rankings unavailable for " + anItem;
 		if (required)
 			abort("lookupCollection: " + why);
@@ -4642,7 +4640,7 @@ int smmMuseumOwnedCopies(item it) {
 
 // Display Case count that makes us #1 with a buffer: strongest other collection
 // + smm.IR.museumBuffer (else smm.dcOvershootAmount, else 11). -1 when there is
-// no ranking; asks the Museum (one request, while today's budget lasts) when
+// no ranking; asks the Museum (one request) when
 // allowLookup and the item has never been looked up.
 int smmMuseumFirstMargin() {
 	string margin = get_property("smm.IR.museumBuffer");
@@ -4659,7 +4657,7 @@ int smmMuseumFirstTarget(int [int,string] ranks) {
 
 int smmMuseumFirstTarget(item it, boolean allowLookup) {
 	int [int,string] ranks = smmMuseumCachedCollection(it);
-	if (!isValidTop10List(ranks) && allowLookup && !smmMuseumStored(it) && smmMuseumLookupsLeft() > 0)
+	if (!isValidTop10List(ranks) && allowLookup && !smmMuseumStored(it))
 		ranks = lookupCollection(it, false);
 	if (!isValidTop10List(ranks) && smmMuseumNobodyHas(it)) return smmMuseumFirstMargin();
 	return smmMuseumFirstTarget(ranks);
