@@ -175,7 +175,7 @@ string kFloundrySpotsKey = "_floundryFishingSpots";
 
 string kHadGoalsKey = "smm.HadGoals";
 
-string kDCPropertyPrefix = "_smm.DCTop10For";
+string kDCPropertyPrefix = "_smm.DCTop10For"; // no longer written: rankings live in the Museum ranking store (smmMuseumStore)
 
 string kSavedOutfitKeyPrefix = "_smm.SavedOutfit";
 string kSavedFamiliarKeyPrefix = "_smm.SavedFamiliar";
@@ -341,19 +341,19 @@ location [string] kLatteLocations = {
 	"clove" : $location[The Sleazy Back Alley], // +3 stench res
 	"coal" : $location[The Haunted Boiler Room], // +25 hot dmg
 	"cocoa powder" : $location[The Icy Peak], // +3 cold res
-	"diet soda" : $location[Battlefield (No Uniform)], // The Cola Wars Battlefield, +50 init -- not unlocked by default
+	"diet soda" : $location[The Cola Wars Battlefield], // The Cola Wars Battlefield, +50 init -- not unlocked by default
 	"Dwarf Cream" : $location[Itznotyerzitz Mine], // +30 mus
-	"Dyspepsi" : $location[Battlefield (Dyspepsi Uniform)], // The Cola Wars Battlefield, +25 init -- not unlocked by default
+	"Dyspepsi" : $location[Cola Wars Battlefield (Dyspepsi Uniform)], // The Cola Wars Battlefield, +25 init -- not unlocked by default
 	"filth milk" : $location[The Feeding Chamber], // +20 dr
 	"fungus" : $location[The Fungal Nethers], // +30 max mp
 	"grave mold" : $location[The Unquiet Garves], // +20 spooky dmg
-	"greek spice" : $location[Frat House], // Frat/Undisguised, +25 sleaze dmg
+	"greek spice" : $location[The Orcish Frat House], // Frat/Undisguised, +25 sleaze dmg
 	"grobold rum" : $location[The Old Rubee Mine], // +25 sleaze dmg -- not unlocked by default
 	"gunpowder" : $location[1st Floor, Shiawase-Mitsuhama Building], // +50 weapon dmg -- not unlocked by default
 	"Health Potion" : $location[The Daily Dungeon], // 15hp/adv regen
 	"hobo spices" : $location[Hobopolis Town Square], // +50 da
 	"hot sausage" : $location[Cobb's Knob Barracks], // +50% mus
-	"kombucha" : $location[Hippy Camp], // Hippy/Undisguised, +25 stench dmg
+	"kombucha" : $location[The Hippy Camp], // Hippy/Undisguised, +25 stench dmg
 	"Lihc saliva" : $location[The Defiled Niche], // +25 spooky dmg
 	"Macaroni" : $location[The Haunted Pantry], // +20 max hp
 	"mega sausage" : $location[Cobb's Knob Laboratory], // +50 mox
@@ -4185,40 +4185,162 @@ int [int, string] parseMuseumCollectionPage(string pageString) {
 		}
 		string label = values[0];
 		int rank = label == "🥇" ? 1 : label == "🥈" ? 2 : label == "🥉" ? 3 : label.starts_with("#") && length(label) > 1 ? substring(label, 1).to_int() : 0;
-		if (rank > 10)
-			break;
 		string amount = values[2].replace_string(",", "");
 		if (rank < 1 || !amount.is_integer() || amount.to_int() < 1) {
 			clear(top10List);
 			return top10List;
 		}
-		top10List[rank, values[1]] = amount.to_int();
+		// Museum puts tied players in one row: one entry per player, so that
+		// entry N really is the Nth-best collection. Keep 11 entries (ten other
+		// players plus possibly us) so the top-ten threshold is known even when
+		// we are in the list; a big tie is cut there, but never cuts us out.
+		if (countTop10(top10List) >= 11)
+			break;
+		cells = create_matcher("(?is)<td\\b[^>]*>(.*?)</td>", row);
+		find(cells); find(cells);
+		matcher players = create_matcher("(?is)href=\"/player/[0-9]+\"[^>]*>(.*?)</a>", group(cells, 1));
+		while (find(players)) {
+			string name = entity_decode(replace_all(create_matcher("(?s)<[^>]*>", group(players, 1)), ""));
+			name = replace_all(create_matcher("^\\s+|\\s+$", name), "");
+			if (name != "" && (countTop10(top10List) < 11 || isMe(name)))
+				top10List[rank, name] = amount.to_int();
+		}
 	}
 	return top10List;
 }
 
+// ---------------------------------------------------------------- Museum ranking store
+// Museum requests are rationed (smm.IR.museumLookups a day, default 50), so every
+// answer is kept in data/smm-museum-ranks-<player id>.txt and reused until
+// "dc refresh" comes round to that item again (oldest first). All Museum
+// requests go through smmMuseumFetch so that one daily budget covers every script.
+record SmmMuseumEntry {
+	int checked;   // when the Museum was asked, in seconds since 1970
+	int holders;   // players with at least one copy on display
+	int mine;      // our count on that page
+	int my_rank;   // our rank on that page, 0 when we are not listed
+	string list;   // toStringCompact of the first 11 entries, "-" when nobody has it
+};
+SmmMuseumEntry [int] smmMuseumStore;
+boolean smmMuseumStoreLoaded;
+
+string smmMuseumStoreFile() { return "smm-museum-ranks-" + my_id() + ".txt"; }
+
+void smmMuseumStoreLoad() {
+	if (smmMuseumStoreLoaded) return;
+	smmMuseumStoreLoaded = true;
+	file_to_map(smmMuseumStoreFile(), smmMuseumStore);
+}
+
+boolean smmMuseumStored(item it) {
+	smmMuseumStoreLoad();
+	return smmMuseumStore contains it.to_int();
+}
+
+SmmMuseumEntry smmMuseumEntry(item it) {
+	SmmMuseumEntry none;
+	return smmMuseumStored(it) ? smmMuseumStore[it.to_int()] : none;
+}
+
+int smmMuseumNow() { return now_to_int() / 1000; }
+
+// Whole days since the stored ranking was fetched; -1 when there is none.
+int smmMuseumAgeDays(item it) {
+	return smmMuseumStored(it) ? max(0, (smmMuseumNow() - smmMuseumStore[it.to_int()].checked) / 86400) : -1;
+}
+
+// The stored list; empty when there is no entry or nobody displays the item.
+int [int, string] smmMuseumStoredList(item it) {
+	int [int, string] ranks;
+	if (!smmMuseumStored(it)) return ranks;
+	matcher cached = create_matcher("([0-9]+)\\. (.*?): ([0-9]+), ", smmMuseumStore[it.to_int()].list);
+	while (find(cached)) ranks[group(cached, 1).to_int(), group(cached, 2)] = group(cached, 3).to_int();
+	if (!isValidTop10List(ranks)) clear(ranks);
+	return ranks;
+}
+
+// True when the Museum told us nobody displays the item: one copy is then #1.
+boolean smmMuseumNobodyHas(item it) {
+	return smmMuseumStored(it) && smmMuseumStore[it.to_int()].holders == 0;
+}
+
+int smmMuseumLookupLimit() {
+	string limit = get_property("smm.IR.museumLookups");
+	return limit == "" ? 50 : max(0, limit.to_int());
+}
+// The counter starts with "_", so Mafia clears it at rollover.
+int smmMuseumLookupsUsed() { return get_property("_smm.museumLookupsUsed").to_int(); }
+int smmMuseumLookupsLeft() { return max(0, smmMuseumLookupLimit() - smmMuseumLookupsUsed()); }
+
+// Reads a Museum item page. checked stays 0 when the page was not understood.
+SmmMuseumEntry smmMuseumParseEntry(string pageString) {
+	SmmMuseumEntry entry;
+	if (!contains_text(pageString, "Museum ::") || contains_text(pageString, "Museum :: Unknown item")) return entry;
+	int [int, string] ranks = parseMuseumCollectionPage(pageString);
+	string me = "/player/" + my_id() + "\"";
+	matcher rows = create_matcher("(?is)<tr\\b[^>]*>(.*?)</tr>", pageString);
+	while (find(rows)) {
+		string row = group(rows, 1);
+		if (!contains_text(row, "href=\"/player/")) continue;
+		if (my_id() != "" && contains_text(row, me)) {
+			entry.my_rank = entry.holders + 1; // everyone counted so far has strictly more
+			row = replace_all(create_matcher("(?is)<style\\b[^>]*>.*?</style>", row), "");
+			matcher cells = create_matcher("(?is)<td\\b[^>]*>(.*?)</td>", row);
+			if (find(cells) && find(cells) && find(cells))
+				entry.mine = replace_all(create_matcher("(?s)<[^>]*>|[,\\s]", group(cells, 1)), "").to_int();
+		}
+		matcher players = create_matcher("href=\"/player/", row);
+		while (find(players)) entry.holders += 1;
+	}
+	if (!isValidTop10List(ranks)) {
+		if (entry.holders > 0 || !contains_text(pageString, "No-one has this item")) return entry;
+		entry.list = "-";
+	} else
+		entry.list = toStringCompact(ranks);
+	entry.checked = smmMuseumNow();
+	return entry;
+}
+
+// One Museum request for one item, counted against today's budget. False when
+// the budget is spent or the page was not understood; the stored entry is then
+// left as it was. Re-reads the file before writing so that two scripts running
+// in turn do not drop each other's entries.
+boolean smmMuseumFetch(item it) {
+	if (it == $item[none] || smmMuseumLookupsLeft() < 1) return false;
+	set_property("_smm.museumLookupsUsed", smmMuseumLookupsUsed() + 1);
+	SmmMuseumEntry entry = smmMuseumParseEntry(visit_url("https://museum.loathers.net/item/" + it.to_int(), false, false));
+	if (entry.checked == 0) return false;
+	clear(smmMuseumStore);
+	file_to_map(smmMuseumStoreFile(), smmMuseumStore);
+	smmMuseumStoreLoaded = true;
+	smmMuseumStore[it.to_int()] = entry;
+	map_to_file(smmMuseumStore, smmMuseumStoreFile());
+	return true;
+}
+
 // Returns a validated ranking list. Optional lookups return an empty map on failure;
 // an unavailable list must never be used to decide how many items to move or buy.
+// The stored ranking is used whatever its age; the Museum is asked only for an
+// item never seen before, and only while today's budget lasts.
 int [int, string] lookupCollection(item anItem, boolean required) {
-	int [int, string] top10List;
 	print("[" + anItem.to_int() + "]" + anItem + " @ " + current_price(anItem));
-	string cacheString = get_property(kDCPropertyPrefix + anItem);
-	matcher cacheMatcher = create_matcher("([0-9]+)\\. (.*?): ([0-9]+), ", cacheString);
-	while (find(cacheMatcher))
-		top10List[group(cacheMatcher, 1).to_int(), group(cacheMatcher, 2)] = group(cacheMatcher, 3).to_int();
-
-	// Museum is the sole network source for collection rankings.
-	if (!isValidTop10List(top10List))
-		top10List = parseMuseumCollectionPage(visit_url("https://museum.loathers.net/item/" + to_int(anItem), false, false));
+	if (!smmMuseumStored(anItem) && smmMuseumLookupsLeft() > 0)
+		smmMuseumFetch(anItem);
+	int [int, string] top10List = smmMuseumStoredList(anItem);
 
 	if (!isValidTop10List(top10List)) {
 		clear(top10List);
+		string why = smmMuseumNobodyHas(anItem) ? "Nobody has " + anItem + " on display; there is no ranking list"
+			: !smmMuseumStored(anItem) && smmMuseumLookupsLeft() < 1 ? "Today's Museum lookups are used up; no stored ranking for " + anItem
+			: "Top 10 rankings unavailable for " + anItem;
 		if (required)
-			abort("lookupCollection: top 10 rankings unavailable for " + anItem);
-		print("Top 10 rankings unavailable for " + anItem + "; skipping ranking operations.", "orange");
+			abort("lookupCollection: " + why);
+		print(why + "; skipping ranking operations.", "orange");
 		return top10List;
 	}
-	set_property(kDCPropertyPrefix + anItem, toStringCompact(top10List));
+	int age = smmMuseumAgeDays(anItem);
+	if (age > 0)
+		print("Museum ranking is " + age + " day" + (age == 1 ? "" : "s") + " old.");
 	return top10List;
 }
 
@@ -4481,12 +4603,9 @@ int undercutWithMinPrice(item itemToUndercut, int limit, int minPrice) {
 }
 
 
+// The stored Museum ranking (any age); never makes a request.
 int [int,string] smmMuseumCachedCollection(item it) {
-    int [int,string] ranks;
-    matcher cached=create_matcher("([0-9]+)\\. (.*?): ([0-9]+), ",get_property(kDCPropertyPrefix+it));
-    while (cached.find()) ranks[cached.group(1).to_int(),cached.group(2)]=cached.group(3).to_int();
-    if (!isValidTop10List(ranks)) clear(ranks);
-    return ranks;
+    return smmMuseumStoredList(it);
 }
 
 // Do not sell copies already earmarked by the route, or the stock needed to
@@ -4523,19 +4642,26 @@ int smmMuseumOwnedCopies(item it) {
 
 // Display Case count that makes us #1 with a buffer: strongest other collection
 // + smm.IR.museumBuffer (else smm.dcOvershootAmount, else 11). -1 when there is
-// no ranking; looks it up (one request) when allowLookup and nothing is cached today.
+// no ranking; asks the Museum (one request, while today's budget lasts) when
+// allowLookup and the item has never been looked up.
+int smmMuseumFirstMargin() {
+	string margin = get_property("smm.IR.museumBuffer");
+	if (margin == "") margin = get_property("smm.dcOvershootAmount");
+	return margin == "" ? 11 : max(1, margin.to_int());
+}
+
 int smmMuseumFirstTarget(int [int,string] ranks) {
 	if (!isValidTop10List(ranks)) return -1;
 	int strongest = 0;
 	foreach rank, name, amount in ranks if (!isMe(name)) strongest = max(strongest, amount);
-	string margin = get_property("smm.IR.museumBuffer");
-	if (margin == "") margin = get_property("smm.dcOvershootAmount");
-	return max(1, strongest + (margin == "" ? 11 : max(1, margin.to_int())));
+	return max(1, strongest + smmMuseumFirstMargin());
 }
 
 int smmMuseumFirstTarget(item it, boolean allowLookup) {
 	int [int,string] ranks = smmMuseumCachedCollection(it);
-	if (!isValidTop10List(ranks) && allowLookup) ranks = lookupCollection(it, false);
+	if (!isValidTop10List(ranks) && allowLookup && !smmMuseumStored(it) && smmMuseumLookupsLeft() > 0)
+		ranks = lookupCollection(it, false);
+	if (!isValidTop10List(ranks) && smmMuseumNobodyHas(it)) return smmMuseumFirstMargin();
 	return smmMuseumFirstTarget(ranks);
 }
 
@@ -5415,7 +5541,6 @@ boolean isUnderwaterLocation(location aLocation) {
 		case $location[Mer-kin Gymnasium]:
 		case $location[Mer-kin Colosseum]:
 			return true;
-			break;
 	}
 
 	return false;
@@ -5490,18 +5615,18 @@ location mysterious_island_camp(string camp) {
 
 	if (warProgress == "unstarted" || warProgress == "started") {
 		if (camp == "hippy")
-			return $location[Hippy Camp];
+			return $location[The Hippy Camp];
 		else
-			return $location[Frat House];
+			return $location[The Orcish Frat House];
 	} else { // warProgress == "finished"
 		if (camp == "hippy" && (sideDefeated == "hippies" || sideDefeated == "both"))
 			return $location[The Hippy Camp (Bombed Back to the Stone Age)];
 		else if (camp == "hippy")
-			return $location[Hippy Camp];
+			return $location[The Hippy Camp];
 		else if (camp == "frat" && (sideDefeated == "fratboys" || sideDefeated == "both"))
 			return $location[The Orcish Frat House (Bombed Back to the Stone Age)];
 		else // frat, not defeated
-			return $location[Frat House];
+			return $location[The Orcish Frat House];
 	}
 	return rval;
 }
@@ -6924,9 +7049,9 @@ int [location] luckyAdventuresByMeatGainMap() {
 		$location[Post-Quest Bugbear Pens] : historical_price($item[bugbear beanie]) + historical_price($item[bugbear bungguard]),
 		$location[Tower Ruins] : historical_price($item[disembodied brain]), // 15 mys
 		$location[The "Fun" House] : historical_price($item[box]) * 3,
-		$location[Battlefield (No Uniform)] : historical_price($item[six-pack of New Cloaca-Cola]),
-		$location[Battlefield (Cloaca Uniform)] : historical_price($item[six-pack of New Cloaca-Cola]),
-		$location[Battlefield (Dyspepsi Uniform)] : historical_price($item[six-pack of New Cloaca-Cola]),
+		$location[The Cola Wars Battlefield] : historical_price($item[six-pack of New Cloaca-Cola]),
+		$location[Cola Wars Battlefield (Cloaca Uniform)] : historical_price($item[six-pack of New Cloaca-Cola]),
+		$location[Cola Wars Battlefield (Dyspepsi Uniform)] : historical_price($item[six-pack of New Cloaca-Cola]),
 		$location[The Unquiet Garves] : historical_price($item[poltergeist-in-the-jar-o]),
 		$location[The VERY Unquiet Garves] : historical_price($item[disembodied brain]) + historical_price($item[smart skull]),
 		$location[Guano Junction] : historical_price($item[Eau de Guaneau]),
@@ -6948,10 +7073,10 @@ int [location] luckyAdventuresByMeatGainMap() {
 		$location[Thugnderdome] : historical_price($item[Gnomish toolbox]),
 		$location[South of the Border] : historical_price($item[donkey flipbook]),
 		$location[The Oasis] : 0, // 20 turns of Ultrahydrated
-		$location[Frat House] : historical_price($item[bottle of rhinoceros hormones]),
-		$location[Frat House (Frat Disguise)] : historical_price($item[roll of drink tickets]),
-		$location[Hippy Camp] : historical_price($item[teeny-tiny magic scroll]),
-		$location[Hippy Camp (Hippy Disguise)] : historical_price($item[fruit basket]),
+		$location[The Orcish Frat House] : historical_price($item[bottle of rhinoceros hormones]),
+		$location[The Orcish Frat House (In Disguise)] : historical_price($item[roll of drink tickets]),
+		$location[The Hippy Camp] : historical_price($item[teeny-tiny magic scroll]),
+		$location[The Hippy Camp (In Disguise)] : historical_price($item[fruit basket]),
 		$location[The Obligatory Pirate's Cove] : historical_price($item[bottle of pirate juice]),
 		$location[A Maze of Sewer Tunnels] : 0, // clan trophy
 		$location[Burnbarrel Blvd.] : historical_price($item[jar of squeeze]) - 5 * kTurnValue, // costs 5 hobo coins, which are untradeable
@@ -7180,7 +7305,7 @@ void frEnsureTurnsNeeded(string [] locStrings) {
 
 // uses the briefcase to get anEffect until anEffect has minimumNumberOfTurns
 boolean briefcase_if_needed(effect anEffect, int minimumNumberOfTurns) {
-	return true;
+	if (true) return true; // briefcase use is switched off; the code below is kept for when it is switched back on
 
 	string [effect] BriefcaseEffectsMap = {
 		$effect[A View to Some Meat] : "meat",
