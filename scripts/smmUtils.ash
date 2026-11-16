@@ -1,7 +1,14 @@
 since r26249;
 import <smmResourcePlanner.ash>
+import <smmValue.ash>
 
 string __smm_utils_version = "1.0";
+
+// Museum guards, defined with smmMuseumSaleQuantity below
+boolean museumSafeCreate(int quantity, item it);
+boolean museumSafeUse(int quantity, item it);
+boolean smmMuseumMaySpend(item it, int quantity);
+boolean smmMuseumFoldSourcesSpare(item into);
 
 
 /*
@@ -965,10 +972,18 @@ int current_historical_price(item anItem) {
 }
 
 
-// Returns the cheapest cost to purchase anItem, with a default of 2 times the autosell price if no other price can be determined.
+// Returns the cheapest cost to purchase anItem. Items that can't be bought (untradeable, no listings)
+// are valued by smmValue.ash from what they are made of or turn into (FantasyRealm mead = 100 Rubees),
+// with a default of 2 times the autosell price if nothing else can be determined.
 // (Stuff sold by NPCs that are guild-specific and in a different guild are examples of items that this would be useful for.)
 int cheapest_price(item anItem) {
 	int buyPrice = current_price(anItem);
+
+	if (buyPrice == 0) {
+		SmmValue derived = smmValueOf(anItem);
+		if (derived.known && derived.method != "autosell")
+			buyPrice = round(derived.value);
+	}
 
 	// if we're using the autosell price, it's because we're out of other options, not because it's cheaper
 	if (buyPrice == 0)
@@ -1195,7 +1210,7 @@ int newAcquire(item anItem, int target, int priceLimit) {
 			while (acquiredThisPass < craftableComponents && needed > 0 && innerTries > 0) {
 				invAmount = item_amount(anItem);
 
-				boolean sexy = create(craftableComponents, anItem);
+				boolean sexy = museumSafeCreate(craftableComponents, anItem);
 				if (!sexy) cli_execute("refresh inv"); // weird things happen when it fails
 
 				acquiredThisPass += item_amount(anItem) - invAmount;
@@ -1277,7 +1292,7 @@ int fullAcquire(item anItem, int target, int maxAcquireCost) {
 	int buyPrice = mall_price(anItem);
 
 	// FOLD
-	if (needed > 0 && count(get_related(anItem, "fold")) > 0) {
+	if (needed > 0 && count(get_related(anItem, "fold")) > 0 && smmMuseumFoldSourcesSpare(anItem)) {
 		boolean success = true;
 		int tries = needed + 3;
 		while (success && needed > 0 && tries > 0) {
@@ -2548,7 +2563,7 @@ boolean ensureNotPoisoned() {
 
 	} else if (isPoisoned()) {
 		fullAcquire($item[anti-anti-antidote]);
-		use(1, $item[anti-anti-antidote]);
+		museumSafeUse(1, $item[anti-anti-antidote]);
 	}
 	return !isPoisoned();
 }
@@ -4491,6 +4506,95 @@ int smmMuseumSaleQuantity(item it, int requested) {
     return min(requested,max(0,available-protected));
 }
 
+// ---------------------------------------------------------------- Museum: spending owned copies
+// Until we are #1 in the Museum for an item, every copy we own is collection
+// stock: eating, drinking, chewing, using, folding or crafting with it is a
+// loss, not a free action. Copies beyond the #1 target (strongest other
+// collection + smm.IR.museumBuffer / smm.dcOvershootAmount, default 11) are
+// spare and may be spent. Without ranking data every owned copy is reserved.
+// Opt out per item with smm.IR.museumSpend.<item ID>=true, or entirely with
+// smm.IR.museum=false. The museumSafe* wrappers below behave like the built-ins
+// but refuse to spend reserved copies; for tradeable items they first get
+// fresh copies (retrieve_item, so mall buying follows KoLmafia's settings).
+
+int smmMuseumOwnedCopies(item it) {
+	return item_amount(it) + closet_amount(it) + storage_amount(it) + equipped_amount(it);
+}
+
+// Display Case count that makes us #1 with a buffer: strongest other collection
+// + smm.IR.museumBuffer (else smm.dcOvershootAmount, else 11). -1 when there is
+// no ranking; looks it up (one request) when allowLookup and nothing is cached today.
+int smmMuseumFirstTarget(int [int,string] ranks) {
+	if (!isValidTop10List(ranks)) return -1;
+	int strongest = 0;
+	foreach rank, name, amount in ranks if (!isMe(name)) strongest = max(strongest, amount);
+	string margin = get_property("smm.IR.museumBuffer");
+	if (margin == "") margin = get_property("smm.dcOvershootAmount");
+	return max(1, strongest + (margin == "" ? 11 : max(1, margin.to_int())));
+}
+
+int smmMuseumFirstTarget(item it, boolean allowLookup) {
+	int [int,string] ranks = smmMuseumCachedCollection(it);
+	if (!isValidTop10List(ranks) && allowLookup) ranks = lookupCollection(it, false);
+	return smmMuseumFirstTarget(ranks);
+}
+
+// Copies the Museum still needs for #1 (all owned copies when there is no ranking).
+int smmMuseumReservedCopies(item it, boolean allowLookup) {
+	if (it == $item[none] || get_property("smm.IR.museum") == "false" || !is_displayable(it)) return 0;
+	if (get_property("smm.IR.museumSpend." + it.to_int()) == "true") return 0;
+	int owned = smmMuseumOwnedCopies(it);
+	if (owned <= 0) return 0;
+	int target = smmMuseumFirstTarget(it, allowLookup);
+	if (target < 0) return owned;
+	return max(0, min(owned, target - display_amount(it)));
+}
+
+int smmMuseumReservedCopies(item it) {
+	return smmMuseumReservedCopies(it, true);
+}
+
+// True when quantity copies can be spent without touching the Museum reserve.
+// For tradeable items, first gets enough fresh copies to leave the reserve intact.
+boolean smmMuseumMaySpend(item it, int quantity) {
+	if (quantity <= 0) return true;
+	int reserved = smmMuseumReservedCopies(it);
+	if (reserved <= 0) return true;
+	if (it.tradeable && smmMuseumOwnedCopies(it) - reserved < quantity)
+		retrieve_item(quantity + reserved, it);
+	if (smmMuseumOwnedCopies(it) - reserved >= quantity) return true;
+	print("Museum: keeping " + reserved + " " + it + " for the Display Case (#1 target), so not spending " + quantity
+		+ ". Set smm.IR.museumSpend." + it.to_int() + "=true to allow it.", "orange");
+	return false;
+}
+
+// Crafting spends every ingredient.
+boolean smmMuseumMaySpendIngredients(item product, int quantity) {
+	foreach ingredient, amount in get_ingredients(product)
+		if (!smmMuseumMaySpend(ingredient, amount * quantity)) return false;
+	return true;
+}
+
+boolean museumSafeEat(int quantity, item it) { return smmMuseumMaySpend(it, quantity) && eat(quantity, it); }
+boolean museumSafeDrink(int quantity, item it) { return smmMuseumMaySpend(it, quantity) && drink(quantity, it); }
+boolean museumSafeOverdrink(int quantity, item it) { return smmMuseumMaySpend(it, quantity) && overdrink(quantity, it); }
+boolean museumSafeChew(int quantity, item it) { return smmMuseumMaySpend(it, quantity) && chew(quantity, it); }
+// Reusable items (tools, eternal batteries, ...) are not spent by using them.
+boolean museumSafeUse(int quantity, item it) { return (it.reusable || smmMuseumMaySpend(it, quantity)) && use(quantity, it); }
+boolean museumSafeCreate(int quantity, item it) { return smmMuseumMaySpendIngredients(it, quantity) && create(quantity, it); }
+// Folding turns a copy of one form into another and KoLmafia picks the source
+// form, so only fold when every other form we own has a spare copy.
+boolean smmMuseumFoldSourcesSpare(item into) {
+	foreach form in get_related(into, "fold")
+		if (form != into && item_amount(form) > 0 && smmMuseumOwnedCopies(form) - smmMuseumReservedCopies(form) <= 0) {
+			print("Museum: not folding into " + into + ": the " + form + " copies are kept for the Display Case.", "orange");
+			return false;
+		}
+	return true;
+}
+
+
+
 // stockAmount is the target stock amount, a zero stockAmount means stock all of theItem
 // saveAmount is the amount of items in all inventory locations (including the display case) to save
 boolean stockItem(int minPrice, int limit, int stockAmount, int saveAmount, item theItem) {
@@ -5551,7 +5655,7 @@ boolean useMoMifNeeded() {
 	fullAcquire($item[milk of magnesium]); // TODO probably only need one of the running-out-check or the fullAcquire
 
 	if (!to_boolean(get_property("_milkOfMagnesiumUsed")))
-		return use(1, $item[milk of magnesium]);
+		return museumSafeUse(1, $item[milk of magnesium]);
 	return true;
 }
 
@@ -5746,6 +5850,7 @@ boolean haveRoom(item checkMe) {
 // uses "drink", so will give a user-confirm warning when overdrinking
 boolean consume(int quantity, item itemToConsume) {
 	print("consuming: " + quantity + " X " + itemToConsume, "green");
+	if (!itemToConsume.reusable && !smmMuseumMaySpend(itemToConsume, quantity)) return false;
 
 	if (itemToConsume.fullness > 0) {
 		useMoMifNeeded();
@@ -6772,7 +6877,7 @@ boolean getLucky() {
 		abort("unknown lucky-getting mechanism");
 
 	fullAcquire($item[11-leaf clover]);
-	return use(1, $item[11-leaf clover]);
+	return museumSafeUse(1, $item[11-leaf clover]);
 }
 
 

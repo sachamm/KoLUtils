@@ -159,6 +159,23 @@ boolean isPPUseful(location aLocation)
 Returns true if at least one monster has a pickpocketable item at the given (or current) location.
 
 
+
+## Item values (smmValue.ash)
+
+<pre>
+smmValue FantasyRealm mead, Rubee&trade;
+</pre>
+
+Prints what each item is worth in mall Meat and how that was derived. In scripts:
+`import <smmValue.ash>` then `smmItemValue(item)` (or `smmValueOf(item)` for the method and reason).
+
+Tradeable items use the mall price. Other items are valued through the conversions in KoLmafia's
+data files (coinmaster and NPC shops, shop rows, crafting recipes, fold groups): a currency or
+ingredient is worth the best mall-priced thing it turns into (Rubee = FantasyRealm tattoo kit / 10,000),
+and an item that turns into nothing priced is worth what it costs to get (FantasyRealm mead = 100 Rubees).
+Placeholder listings (100M+ Meat) and an exit over 3x the next-best exit is ignored.
+Settings are listed at the top of the file.
+
 Local development
 -----------------
 Edit scripts in this repository. On the development Mac, individual files in
