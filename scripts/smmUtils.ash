@@ -9743,11 +9743,17 @@ PrioritySkillRecord [int] instaKillSkillData() { // #free kill #freekill
 }
 
 
+// counts only free kills that chooseInstaKillSkill() could pick right now: usable now and allowed by
+// the resource planner. Unlimited entries (Dart Holster, Free-for-all) report kMaxInt uses even when
+// unusable, so counting them unconditionally made this always positive. Capped at kMaxInt.
 int instaKillsAvailable() {
 	int rval;
-	PrioritySkillRecord [int] instaKillSkillData = instaKillSkillData();
-	foreach idx in instaKillSkillData {
-		rval += instaKillSkillData[idx].usesAvailable;
+	foreach idx, psr in instaKillSkillData() {
+		if (!psr.isAvailableNow) continue;
+		int uses = smmRPAllowedSkillUses(psr.theSkill, psr.usesAvailable);
+		if (uses <= 0) continue;
+		if (uses >= kMaxInt - rval) return kMaxInt;
+		rval += uses;
 	}
 	return rval;
 }
