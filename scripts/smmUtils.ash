@@ -8168,6 +8168,117 @@ boolean cllHasFought(monster amon) {
 }
 
 
+
+// Turns burn_timespinner (smmUnrestricted.ash) spends with minutesUsed of today's 10 minutes
+// gone: a 3-minute fight from a recent fight while 3+ minutes remain, then a 1-minute trip way
+// back in time per minute left. Each is a fight.
+int timeSpinnerFightTurns(int minutesUsed) {
+	int recentFights = minutesUsed <= 7 ? (7 - minutesUsed) / 3 + 1 : 0;
+	return recentFights + max(0, 10 - minutesUsed - 3 * recentFights);
+}
+
+// Turns burnScavengeDaycare(budget) spends after `scavenges` scavenges today: each scavenge
+// costs min(scavenges so far, 3) turns (the first is free), while the budget covers it.
+int daycareScavengeTurns(int scavenges, int budget) {
+	int spent = 0;
+	while (budget >= min(scavenges, 3)) {
+		int cost = min(scavenges, 3);
+		budget -= cost;
+		spent += cost;
+		scavenges++;
+	}
+	return spent;
+}
+
+// Adventures good_night_adv (smmUnrestricted.ash) will spend after the nightcap, while
+// overdrunk: fights started from an item or skill rather than a zone, plus Boxing Daycare
+// scavenging. The nightcap is planned around this (diet.js asks for it): holding these
+// adventures back until after the overdrink lets the day end closer to the rollover cap.
+// Keep in step with good_night_adv. Counts only what costs a turn.
+int goodNightAdvTurns(boolean shouldPrint) {
+	int [string] parts;
+
+	// fax: one turn-costing fight, if not used today (garbo may have used it)
+	if (!get_property("_photocopyUsed").to_boolean()
+		&& (item_amount($item[photocopied monster]) > 0 || (get_clan_lounge() contains $item[deluxe fax machine])))
+		parts["fax"] = 1;
+
+	// Time-Spinner: 3-minute fights from a recent fight while 3+ minutes remain
+	// (burnTimeSpinnerRecentFights), then 1-minute trips way back in time
+	if (available_amount($item[Time-Spinner]) > 0)
+		parts["Time-Spinner"] = timeSpinnerFightTurns(get_property("_timeSpinnerMinutesUsed").to_int());
+
+	// Combat Lover's Locket: one turn per reminiscence left
+	if (available_amount($item[combat lover's locket]) > 0)
+		parts["combat lover's locket"] = max(0, 3 - cllNumMonstersFought());
+
+	// Boxing Daycare: burnScavengeDaycare(3) -- each scavenge costs min(scavenges so far, 3) turns
+	if (get_property("daycareOpen").to_boolean())
+		parts["Boxing Daycare scavenging"] = daycareScavengeTurns(get_property("_daycareGymScavenges").to_int(), 3);
+
+	int total = 0;
+	string desc = "";
+	foreach what, turns in parts {
+		total += turns;
+		if (turns > 0) desc += (desc == "" ? "" : ", ") + turns + " " + what;
+	}
+	if (shouldPrint)
+		print("good_night_adv will spend " + total + " adventures overdrunk" + (desc == "" ? "" : " (" + desc + ")"), "blue");
+	return total;
+}
+
+
+
+boolean isHalloween() {
+	return today_to_string().ends_with("1031");
+}
+
+
+// A way to spend any number of adventures while overdrunk, and what one of those adventures
+// is worth in meat. good_night_adv spends the adventures that would pass the rollover cap on
+// the best one (burnOverdrunkExcess in smmUnrestricted.ash); diet.js lets the nightcap pass
+// the cap, instead of trimming it, when that is worth more than leaving the consumable out.
+record OverdrunkSink {
+	string name;
+	int value;   // meat per adventure
+	string how;  // gCLI command, with %d for the number of adventures
+};
+
+// Available sinks, best first. Values come from these preferences, else the defaults noted.
+OverdrunkSink [int] overdrunkSinks() {
+	OverdrunkSink [int] sinks;
+	// Hallowe'en: trick-or-treat blocks (about 5 adventures each) -- default: an adventure
+	if (isHalloween())
+		sinks[count(sinks)] = new OverdrunkSink("trick-or-treating",
+			get_property("smm.TrickOrTreatTurnValue") == "" ? kTurnValue : get_property("smm.TrickOrTreatTurnValue").to_int(),
+			"call smmHallo.ash %d");
+	// Drunkula's wineglass: garbo farms Barf Mountain overdrunk with it in the off-hand.
+	// Default: garbo's own valueOfAdventure, else 90% of an adventure (the off-hand is lost)
+	if (available_amount($item[Drunkula's wineglass]) > 0 && can_equip($item[Drunkula's wineglass])) {
+		int wine = get_property("smm.WineglassTurnValue").to_int();
+		if (get_property("smm.WineglassTurnValue") == "")
+			wine = get_property("valueOfAdventure").to_int() > 0 ? get_property("valueOfAdventure").to_int() : kTurnValue * 9 / 10;
+		sinks[count(sinks)] = new OverdrunkSink("Drunkula's wineglass (garbo)", wine, "garbo nodiet turns=%d");
+	}
+	// Beach Comb: combs past the 11 free ones cost an adventure each. Default 1,000: combing
+	// finds mostly cheap beach items (set smm.BeachCombTurnValue to your own figure)
+	if (available_amount($item[Beach Comb]) > 0)
+		sinks[count(sinks)] = new OverdrunkSink("Beach Comb",
+			get_property("smm.BeachCombTurnValue") == "" ? 1000 : get_property("smm.BeachCombTurnValue").to_int(),
+			"combo %d");
+	sort sinks by -value.value;
+	return sinks;
+}
+
+// overdrunkSinks() for diet.js: "name|value;name|value", best first
+string overdrunkSinkList() {
+	string rval = "";
+	foreach i, sink in overdrunkSinks()
+		if (sink.value > 0) rval += (rval == "" ? "" : ";") + sink.name + "|" + sink.value;
+	return rval;
+}
+
+
 void cllReminiscenceClearCache() {
 	remove_property("_smm.CLLMonsters");
 }
