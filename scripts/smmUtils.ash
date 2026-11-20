@@ -8236,7 +8236,7 @@ int goodNightAdvTurns(boolean shouldPrint) {
 
 
 boolean isHalloween() {
-	return today_to_string().ends_with("1031");
+	return holiday().contains_text("Halloween") || today_to_string().ends_with("1031");
 }
 
 
