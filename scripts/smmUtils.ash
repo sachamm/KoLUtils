@@ -7928,11 +7928,17 @@ void burnFreeCombs(int saveAmt) {
 
 
 
+// Spacegate energy left today, read from the terminal. The count is followed by "Adventures",
+// or possibly "Adventure" at one energy, so the match stops at the number. With no energy line, a gate not yet dialed
+// today has its full 20; a dialed gate has none left.
 int spacegateEnergy() {
 	string thePage = visit_url("/place.php?whichplace=spacegate&action=sg_Terminal");
-	matcher energyMatcher = create_matcher("Spacegate Energy remaining: <b><font size=\\+2>([0-9][0-9]?) </font></b>Adventures", thePage);
-	if (!find(energyMatcher))
-		return 20;
+	matcher energyMatcher = create_matcher("Spacegate Energy remaining: <b><font size=\\+2>([0-9]+) </font>", thePage);
+	if (!find(energyMatcher)) {
+		int fallback = get_property("_spacegateCoordinates") == "" ? 20 : 0;
+		set_property("_spacegateTurnsLeft", fallback);
+		return fallback;
+	}
 	int energyLeft = group(energyMatcher, 1).to_int();
 	set_property("_spacegateTurnsLeft", energyLeft);
 	return energyLeft;
